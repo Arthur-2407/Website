@@ -440,6 +440,65 @@ router.post('/face-login', async (req, res) => {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // SECURITY: Query stored face embedding from database.
+    // The AI service does NOT look up embeddings internally.
+    // We pass it here to prevent any internal bypass.
+    // ═══════════════════════════════════════════════════════════════
+    const embeddingResult = await query(
+      `SELECT embedding_vector
+       FROM face_embeddings
+       WHERE employee_id = $1 AND is_active = TRUE
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [employee.id]
+    );
+
+    if (embeddingResult.rows.length === 0) {
+      await logSecurityEvent({
+        employeeId,
+        eventType: 'LOGIN_FAILED',
+        ipAddress: req.ip,
+        deviceInfo: req.headers['user-agent'],
+        details: 'Face login attempted but no face registered for this employee',
+        severity: 'medium',
+      });
+
+      return res.status(403).json({
+        success: false,
+        authenticated: false,
+        error: 'No face profile registered for this account. Please contact your administrator to enroll your face.',
+        code: 'NO_FACE_REGISTERED',
+      });
+    }
+
+    // Parse and validate the stored embedding
+    let storedEmbedding = null;
+    try {
+      const rawVector = embeddingResult.rows[0].embedding_vector;
+      storedEmbedding = typeof rawVector === 'string' ? JSON.parse(rawVector) : rawVector;
+    } catch (parseErr) {
+      logger.error('[FaceLogin] Stored embedding parse error', { error: parseErr.message, employeeId });
+    }
+
+    if (!Array.isArray(storedEmbedding) || storedEmbedding.length < 512) {
+      await logSecurityEvent({
+        employeeId,
+        eventType: 'FACE_REGISTRATION_ERROR',
+        ipAddress: req.ip,
+        deviceInfo: req.headers['user-agent'],
+        details: 'Stored face embedding is corrupted or too short — re-enrollment required',
+        severity: 'high',
+      });
+
+      return res.status(403).json({
+        success: false,
+        authenticated: false,
+        error: 'Your face profile is corrupted. Please contact your administrator to re-enroll your face.',
+        code: 'CORRUPTED_FACE_EMBEDDING',
+      });
+    }
+
     const faceAIServiceUrl = process.env.FACE_AI_SERVICE_URL || 'http://face-ai-service:8000';
     let authResult;
 
@@ -454,10 +513,11 @@ router.post('/face-login', async (req, res) => {
                 frames,
                 employeeId,
                 employee_id: employeeId,
+                stored_embedding: storedEmbedding,  // ← Pass stored embedding from DB
                 challengeType,
                 challenge_type: challengeType,
               },
-              { timeout: Number(process.env.FACE_AI_TIMEOUT_MS || 10000) }
+              { timeout: Number(process.env.FACE_AI_TIMEOUT_MS || 15000) }
             );
             return aiResponse.data;
           } catch (err) {
@@ -914,7 +974,30 @@ router.post('/register-face', authenticateToken, async (req, res) => {
       // Store face embedding in database
       try {
         const embeddingVector = response.data.embedding || response.data.face_embedding || null;
-        const confidenceScore = response.data.confidence || response.data.confidence_score || null;
+        const confidenceScore = response.data.confidence_score || response.data.quality_score || null;
+
+        // ── SECURITY: Validate the embedding before storing ──────────────
+        // An empty, missing, or malformed embedding means face registration
+        // has failed silently. Reject it — do NOT store '[]' as a valid embedding.
+        const isValidEmbedding = (
+          Array.isArray(embeddingVector)
+          && embeddingVector.length >= 512
+          && embeddingVector.every((v) => typeof v === 'number' && isFinite(v))
+        );
+
+        if (!isValidEmbedding) {
+          logger.error('[RegisterFace] AI service returned invalid embedding', {
+            employeeId,
+            embeddingType: typeof embeddingVector,
+            embeddingLength: Array.isArray(embeddingVector) ? embeddingVector.length : 'N/A',
+          });
+
+          return res.status(500).json({
+            success: false,
+            error: 'Face AI service returned an invalid embedding. Please try again with better lighting and a clearer face position.',
+            code: 'INVALID_EMBEDDING_RETURNED',
+          });
+        }
 
         // Deactivate any existing face embeddings for this employee
         await query(
@@ -922,15 +1005,15 @@ router.post('/register-face', authenticateToken, async (req, res) => {
           [targetEmployeeId]
         );
 
-        // Insert new embedding
+        // Insert new validated embedding
         await query(
           `INSERT INTO face_embeddings
              (employee_id, embedding_vector, embedding_version, confidence_score, enrolled_by, enrollment_date)
            VALUES ($1, $2, $3, $4, $5, NOW())`,
           [
             targetEmployeeId,
-            embeddingVector ? JSON.stringify(embeddingVector) : '[]',
-            response.data.model_version || '1.0',
+            JSON.stringify(embeddingVector),
+            response.data.model_version || 'arcface-1.0',
             confidenceScore,
             requestingUserId,
           ]
@@ -955,13 +1038,24 @@ router.post('/register-face', authenticateToken, async (req, res) => {
            VALUES ($1, $2, 'ENROLL', $3, $4, $5, $6::inet, $7)`,
           [
             requestingUserId, targetEmployeeId, requestingUserRole,
-            confidenceScore, response.data.model_version || '1.0',
+            confidenceScore, response.data.model_version || 'arcface-1.0',
             req.ip, req.headers['user-agent'] || null,
           ]
         );
+
+        logger.info('[RegisterFace] Embedding stored successfully', {
+          employeeId,
+          embeddingDim: embeddingVector.length,
+          model: response.data.model_version,
+        });
+
       } catch (dbErr) {
         logger.error('Face embedding DB storage failed', { error: dbErr.message, employeeId });
-        // Continue even if DB storage fails — face is registered in AI service
+        return res.status(500).json({
+          success: false,
+          error: 'Face embedding could not be saved to database. Please try again.',
+          code: 'DB_STORAGE_FAILED',
+        });
       }
 
       await logSecurityEvent({

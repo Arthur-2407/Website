@@ -46,7 +46,9 @@ async function getActiveEmbedding(employeeId) {
   return result.rows[0] || null;
 }
 
-// Helper to generate embedding vector
+// Helper to generate embedding vector from frames via Face AI service.
+// SECURITY: No mock/fallback embedding is used. If AI service is unavailable
+// or returns an invalid embedding, the registration FAILS with an explicit error.
 async function generateEmbeddingFromFrames(frames, employeeId) {
   try {
     const faceAIServiceUrl = process.env.FACE_AI_SERVICE_URL || 'http://face-ai-service:8000';
@@ -55,28 +57,51 @@ async function generateEmbeddingFromFrames(frames, employeeId) {
       { frames, employeeId, employee_id: employeeId },
       { timeout: Number(process.env.FACE_AI_TIMEOUT_MS || 15000) }
     );
-    
+
     if (response.data.success || response.data.registered) {
-      // In mock mode, the AI service doesn't return the vector. Fallback to a mock 512 float array.
-      const vector = response.data.embedding || response.data.face_embedding || 
-        Array.from({ length: 512 }, (_, i) => Number((Math.sin(i) * 0.5 + 0.5).toFixed(4)));
+      const vector = response.data.embedding || response.data.face_embedding || null;
+
+      // Validate the embedding is a real 512-element float array
+      const isValid = (
+        Array.isArray(vector)
+        && vector.length >= 512
+        && vector.every((v) => typeof v === 'number' && isFinite(v))
+      );
+
+      if (!isValid) {
+        logger.error('[generateEmbedding] AI service returned invalid embedding', {
+          employeeId,
+          vectorType: typeof vector,
+          vectorLength: Array.isArray(vector) ? vector.length : 'N/A',
+        });
+        return {
+          success: false,
+          error: 'Face AI service returned an invalid embedding. Please try again with better lighting and a clearer face position.',
+          code: 'INVALID_EMBEDDING',
+        };
+      }
+
       return {
         success: true,
         embedding: JSON.stringify(vector),
-        version: response.data.model_version || '1.0',
-        confidence: response.data.quality_score || 1.0
+        version: response.data.model_version || 'arcface-1.0',
+        confidence: response.data.quality_score || null,
       };
     }
-    return { success: false, error: response.data.error || 'Face registration failed' };
-  } catch (err) {
-    logger.warn('Face AI service failed, falling back to local mock embedding', { error: err.message });
-    // Safe fallback for testing/development environments
-    const mockVector = Array.from({ length: 512 }, (_, i) => Number((Math.sin(i) * 0.5 + 0.5).toFixed(4)));
+
     return {
-      success: true,
-      embedding: JSON.stringify(mockVector),
-      version: '1.0',
-      confidence: 0.95
+      success: false,
+      error: response.data.error || 'Face registration failed. Please ensure your face is visible and try again.',
+      code: response.data.code || 'REGISTRATION_FAILED',
+    };
+
+  } catch (err) {
+    // Face AI service is unreachable — do NOT substitute a fake embedding
+    logger.error('[generateEmbedding] Face AI service unavailable', { error: err.message, employeeId });
+    return {
+      success: false,
+      error: 'Face recognition service is currently unavailable. Please try again shortly.',
+      code: 'AI_SERVICE_UNAVAILABLE',
     };
   }
 }

@@ -18,6 +18,8 @@ interface CapturedFrame {
 
 // STABILIZATION: Processing timeout — prevents infinite spinner
 const PROCESSING_TIMEOUT_MS = 30_000;
+// SECURITY: Minimum frames required for reliable liveness + embedding generation
+const MINIMUM_FRAMES_REQUIRED = 15;
 
 const FaceLogin = () => {
   const navigate = useNavigate();
@@ -120,8 +122,8 @@ const FaceLogin = () => {
       return;
     }
 
-    if (frames.length < 10) {
-      showError('Not enough frames captured. Please wait for more frames.');
+    if (frames.length < MINIMUM_FRAMES_REQUIRED) {
+      showError(`Not enough frames captured. Please wait for at least ${MINIMUM_FRAMES_REQUIRED} frames.`);
       return;
     }
 
@@ -384,7 +386,7 @@ const FaceLogin = () => {
 
             <button
               onClick={() => handleFaceLoginWithStep()}
-              disabled={isProcessing || !employeeId || frames.length < 5}
+              disabled={isProcessing || !employeeId || frames.length < MINIMUM_FRAMES_REQUIRED}
               className={`w-full px-4 py-3 rounded-lg transition-all ${
                 isProcessing
                   ? 'bg-gray-400 cursor-not-allowed'
