@@ -6,5 +6,11 @@ RUN apk add --no-cache curl
 # Copy nginx config into the image (avoids Docker Desktop Windows bind-mount path issues)
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# Copy self-signed SSL certificates into image so HTTPS server block can start.
+# In production, replace these with CA-signed certs via a secrets manager or volume.
+RUN mkdir -p /etc/nginx/ssl
+COPY ssl/server.crt /etc/nginx/ssl/server.crt
+COPY ssl/server.key /etc/nginx/ssl/server.key
+
 # Expose ports
 EXPOSE 80 443

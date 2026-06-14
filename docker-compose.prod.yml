@@ -142,7 +142,6 @@ services:
       dockerfile: Dockerfile.prod
     container_name: attendance-nginx-prod
     volumes:
-      - nginx_ssl:/etc/nginx/ssl:ro
       - nginx_logs:/var/log/nginx
     ports:
       - "80:80"
@@ -179,6 +178,4 @@ volumes:
   backend_api_logs:
     driver: local
   nginx_logs:
-    driver: local
-  nginx_ssl:
     driver: local
