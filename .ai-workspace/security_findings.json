@@ -1,0 +1,14 @@
+{
+  "vulnerabilities": [
+    {
+      "name": "Combined admin auth verification check",
+      "severity": "high",
+      "status": "secured"
+    },
+    {
+      "name": "Role check validations",
+      "severity": "medium",
+      "status": "secured"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "benchmarks": [
+    {
+      "component": "backend router API response time",
+      "status": "within budget"
+    },
+    {
+      "component": "Vite bundling vendor assets size",
+      "status": "optimized"
+    }
+  ]
+}

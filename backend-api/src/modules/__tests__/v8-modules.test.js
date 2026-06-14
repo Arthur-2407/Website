@@ -11,46 +11,47 @@ describe('DeviceTrustEngine', () => {
     jest.mock('../../config/logger', () => ({
       logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
     }));
+    jest.mock('../../config/database', () => null);
     ({ DeviceTrustEngine } = require('../security/deviceTrust'));
   });
 
-  test('unknown device gets low trust score', () => {
+  test('unknown device gets low trust score', async () => {
     const engine = new DeviceTrustEngine();
     const req = { headers: { 'user-agent': 'TestBrowser/1.0' }, ip: '1.2.3.4' };
-    const result = engine.evaluate('user1', req);
+    const result = await engine.evaluate('user1', req);
     expect(result.score).toBe(0);
     expect(result.level).toBe('low');
     expect(result.isNewDevice).toBe(true);
     expect(result.isNewIp).toBe(true);
   });
 
-  test('registered device gets high trust score', () => {
+  test('registered device gets high trust score', async () => {
     const engine = new DeviceTrustEngine();
     const req = { headers: { 'user-agent': 'TestBrowser/1.0', 'accept-language': 'en' }, ip: '1.2.3.4' };
-    engine.register('user2', req);
-    const result = engine.evaluate('user2', req);
+    await engine.register('user2', req);
+    const result = await engine.evaluate('user2', req);
     expect(result.score).toBe(100);
     expect(result.level).toBe('high');
     expect(result.isNewDevice).toBe(false);
     expect(result.isNewIp).toBe(false);
   });
 
-  test('known device but new IP gets medium trust', () => {
+  test('known device but new IP gets medium trust', async () => {
     const engine = new DeviceTrustEngine();
     const req1 = { headers: { 'user-agent': 'TestBrowser/1.0', 'accept-language': 'en' }, ip: '1.2.3.4' };
-    engine.register('user3', req1);
+    await engine.register('user3', req1);
     const req2 = { headers: { 'user-agent': 'TestBrowser/1.0', 'accept-language': 'en' }, ip: '5.6.7.8' };
-    const result = engine.evaluate('user3', req2);
+    const result = await engine.evaluate('user3', req2);
     expect(result.score).toBe(50);
     expect(result.level).toBe('medium');
   });
 
-  test('getStats returns correct counts', () => {
+  test('getStats returns correct counts', async () => {
     const engine = new DeviceTrustEngine();
     const req = { headers: { 'user-agent': 'Test' }, ip: '1.1.1.1' };
-    engine.register('u1', req);
-    engine.register('u2', req);
-    const stats = engine.getStats();
+    await engine.register('u1', req);
+    await engine.register('u2', req);
+    const stats = await engine.getStats();
     expect(stats.trackedUsers).toBe(2);
   });
 });

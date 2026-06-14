@@ -1,0 +1,14 @@
+{
+  "backend-api": [
+    "postgres",
+    "redis",
+    "face-ai-service"
+  ],
+  "frontend": [
+    "backend-api"
+  ],
+  "nginx": [
+    "frontend",
+    "backend-api"
+  ]
+}

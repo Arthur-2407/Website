@@ -1,0 +1,44 @@
+[
+  {
+    "phase": 3,
+    "priority": "high",
+    "task": "Run migrations against a live PostgreSQL instance and add integration tests with a disposable database.",
+    "reason": "SQL is syntax-aligned and idempotent, but live DB execution was not available in this turn."
+  },
+  {
+    "phase": 5,
+    "priority": "medium",
+    "task": "Continue frontend design-system modernization and accessibility pass.",
+    "reason": "Route splitting is complete, but pages still use mixed visual patterns and limited a11y checks."
+  },
+  {
+    "phase": 6,
+    "priority": "high",
+    "task": "Replace compatibility AI responses with persistent embeddings, calibrated liveness thresholds, and model telemetry.",
+    "reason": "The AI service has endpoint compatibility, but model persistence and observability remain incomplete."
+  },
+  {
+    "phase": 8,
+    "priority": "high",
+    "task": "Add integration, E2E, websocket, load, and AI pipeline test suites (Playwright/Cypress).",
+    "reason": "Focused backend unit/contract tests added (47 tests); E2E/integration layers require a live stack."
+  },
+  {
+    "phase": 9,
+    "priority": "medium",
+    "task": "Implement payroll, workforce analytics, absenteeism prediction, push notifications, and offline attendance.",
+    "reason": "Core attendance and leave flows exist; enterprise feature expansion is not complete."
+  },
+  {
+    "phase": 10,
+    "priority": "medium",
+    "task": "Deploy Kubernetes + Helm + observability stack to a cluster and validate probes/HPA/Grafana.",
+    "reason": "Manifests and Helm chart exist; actual cluster deployment requires infrastructure."
+  },
+  {
+    "phase": 11,
+    "priority": "low",
+    "task": "Add Terraform IaC for cloud provider provisioning.",
+    "reason": "Docker Compose and K8s manifests exist; Terraform is not yet present."
+  }
+]

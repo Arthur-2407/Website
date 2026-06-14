@@ -9,12 +9,21 @@
  *   GET  /api/auth/mfa/status   — Check if MFA is enabled for current user
  */
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { generateSecret, verifyTOTP, generateBackupCodes, buildProvisioningURI } = require('./mfa');
 const { authenticateToken } = require('../../middleware/authMiddleware');
+const { createLimiter } = require('../../middleware/rateLimiter');
 const { logger } = require('../../config/logger');
 const { query } = require('../../config/database');
 
 const router = express.Router();
+
+// Rate limiter for MFA validation (max 5 attempts per minute per user)
+const mfaValidationLimiter = createLimiter({
+  windowMs: 60_000,      // 60 seconds
+  max: 5,                // 5 attempts
+  name: 'mfa-validation'
+});
 
 // All MFA routes require authentication
 router.use(authenticateToken);
@@ -40,10 +49,13 @@ router.post('/enroll', async (req, res) => {
     const provisioningURI = buildProvisioningURI(secret, email);
     const backupCodes = generateBackupCodes();
 
+    // Hash backup codes before storing in DB
+    const hashedBackupCodes = backupCodes.map(code => bcrypt.hashSync(code, 10));
+
     // Store pending secret (not confirmed yet)
     await query(
       'UPDATE employees SET mfa_pending_secret = $1, mfa_backup_codes = $2 WHERE id = $3',
-      [secret, JSON.stringify(backupCodes), userId]
+      [secret, JSON.stringify(hashedBackupCodes), userId]
     );
 
     logger.info('[MFA] Enrollment started', { userId });
@@ -104,7 +116,8 @@ router.post('/verify', async (req, res) => {
 });
 
 // ── Validate (during login) ───────────────────────────────────────────────
-router.post('/validate', async (req, res) => {
+// Rate limited: max 5 attempts per minute
+router.post('/validate', mfaValidationLimiter, async (req, res) => {
   try {
     const userId = req.user.id;
     const { code } = req.body;
@@ -129,9 +142,16 @@ router.post('/validate', async (req, res) => {
 
     // Try backup codes
     const backups = JSON.parse(mfa_backup_codes || '[]');
-    const idx = backups.indexOf(code.toUpperCase());
-    if (idx !== -1) {
-      backups.splice(idx, 1);
+    let matchedIdx = -1;
+    for (let i = 0; i < backups.length; i++) {
+      if (bcrypt.compareSync(code.toUpperCase(), backups[i])) {
+        matchedIdx = i;
+        break;
+      }
+    }
+
+    if (matchedIdx !== -1) {
+      backups.splice(matchedIdx, 1);
       await query(
         'UPDATE employees SET mfa_backup_codes = $1 WHERE id = $2',
         [JSON.stringify(backups), userId]

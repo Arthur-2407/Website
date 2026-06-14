@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "check": "responsive login and layout wrapper",
+      "status": "passed"
+    },
+    {
+      "check": "bootstrap configuration panels",
+      "status": "passed"
+    }
+  ]
+}

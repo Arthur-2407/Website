@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { FaUserLock, FaCamera, FaShieldAlt, FaExclamationTriangle } from 'react-icons/fa';
 import FaceCamera from '@components/camera/FaceCamera';
@@ -21,11 +21,14 @@ const PROCESSING_TIMEOUT_MS = 30_000;
 
 const FaceLogin = () => {
   const navigate = useNavigate();
+  const locationState = useLocation();
   const { login } = useAuth();
   const { showError, showSuccess } = useNotification();
   const coordinator = useAsyncCoordinator('face-login');
   
   const [employeeId, setEmployeeId] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [requirePassword, setRequirePassword] = useState<boolean>(false);
   const [frames, setFrames] = useState<CapturedFrame[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [livenessStatus, setLivenessStatus] = useState<'idle' | 'detecting' | 'success' | 'failed'>('idle');
@@ -33,6 +36,28 @@ const FaceLogin = () => {
   const [challengeStep, setChallengeStep] = useState<number>(0);
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  // Prefill Employee ID and check password requirement from navigation state
+  useEffect(() => {
+    if (locationState.state?.employeeId) {
+      setEmployeeId(locationState.state.employeeId);
+    }
+    if (locationState.state?.requirePassword) {
+      setRequirePassword(true);
+    }
+  }, [locationState.state]);
+
+  // Dynamically toggle password field if "admin" or "supervisor" is typed
+  useEffect(() => {
+    const idLower = employeeId.toLowerCase();
+    if (idLower === 'admin' || idLower === 'supervisor' || idLower.includes('admin') || idLower.includes('super')) {
+      setRequirePassword(true);
+    } else {
+      if (!locationState.state?.requirePassword) {
+        setRequirePassword(false);
+      }
+    }
+  }, [employeeId, locationState.state]);
 
   // STABILIZATION: Refs for timeout/abort management
   const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,6 +151,7 @@ const FaceLogin = () => {
       const loginData: FaceLoginData = {
         frames: frames.map((f: CapturedFrame) => f.data),
         employeeId,
+        password: requirePassword ? password : undefined,
         challengeType: effectiveStep > 0 ? `challenge_${effectiveStep}` : undefined,
         location: location || undefined,
       };
@@ -255,6 +281,28 @@ const FaceLogin = () => {
                 placeholder="Enter your employee ID"
               />
             </div>
+
+            {/* Password Input (Admin/Supervisor) */}
+            {requirePassword && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="mb-6"
+              >
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter your password"
+                  required={requirePassword}
+                />
+              </motion.div>
+            )}
 
             {/* Location Status */}
             <div className="mb-6">

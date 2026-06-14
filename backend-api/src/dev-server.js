@@ -9,6 +9,13 @@ const { Server } = require('socket.io');
 // Load environment variables
 dotenv.config({ path: './config.env' });
 
+// SECURITY: Hard guard — development server MUST NOT run in production
+if (process.env.NODE_ENV === 'production') {
+  console.error('CRITICAL SECURITY ERROR: dev-server.js must not be run in production!');
+  console.error('Use `node src/server.js` instead.');
+  process.exit(1);
+}
+
 // Mock database and Redis connections for development
 const mockConnectDB = async () => {
   console.log('✅ Mock database connection (development mode)');

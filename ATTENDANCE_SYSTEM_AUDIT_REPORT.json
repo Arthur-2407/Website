@@ -1,0 +1,629 @@
+{
+  "auditDate": "2026-06-13",
+  "systemName": "Enterprise Employee Attendance System",
+  "version": "1.0.0",
+  "criticalIssues": [
+    {
+      "id": "CRITICAL-001",
+      "severity": "CRITICAL",
+      "title": "Missing Employee Management API - No User/Employee CRUD Operations",
+      "description": "The system has NO API endpoints for creating, updating, or deleting employees/supervisors/admins. The only way to onboard users is through Excel bulk import (/api/excel/upload), which lacks proper authorization checks.",
+      "locations": [
+        {
+          "file": "backend-api/src/modules/excel-processing/routes.js",
+          "lines": "105-148",
+          "issue": "POST /api/excel/upload endpoint accepts authenticated user (any role) but should be admin-only"
+        },
+        {
+          "file": "backend-api/src/server.js",
+          "lines": "1-300",
+          "issue": "No /api/users or /api/employees routes for management"
+        }
+      ],
+      "impact": "Admins cannot manage employees programmatically. Only bulk Excel import available. No way to deactivate or update employees without direct DB access.",
+      "recommendation": "Implement comprehensive employee management API with proper authorization:\n- POST /api/admin/employees (create employee)\n- PUT /api/admin/employees/:id (update employee)\n- DELETE /api/admin/employees/:id (soft delete)\n- GET /api/admin/employees (list all)\n- POST /api/admin/supervisors/:id/assign-employees (assign employees to supervisor)"
+    },
+    {
+      "id": "CRITICAL-002",
+      "severity": "CRITICAL",
+      "title": "Frontend Routes Not Role-Protected - Unauthorized Access to Dashboards",
+      "description": "Frontend routes for supervisor dashboard (/supervisor) and security dashboard (/security) are NOT protected by role-based access. Any authenticated user can directly visit these URLs and see the components.",
+      "locations": [
+        {
+          "file": "frontend/src/router.tsx",
+          "lines": "1-72",
+          "issue": "No ProtectedRoute or role-based route guards. Routes conditionally render in Navbar but URL can be visited directly."
+        },
+        {
+          "file": "frontend/src/pages/SupervisorDashboard.tsx",
+          "lines": "1-50",
+          "issue": "No role verification before rendering sensitive supervisor data"
+        },
+        {
+          "file": "frontend/src/pages/SecurityDashboard.tsx",
+          "lines": "1-50",
+          "issue": "No role verification before rendering security events/spoof attempts"
+        }
+      ],
+      "impact": "An employee can navigate to /supervisor or /security URLs and potentially see/manipulate supervisor/security dashboards. Data API calls may fail, but UI is exposed.",
+      "recommendation": "Implement role-based route protection:\n1. Create ProtectedRoute component that verifies user.role\n2. Apply to /supervisor and /security routes\n3. Add role checks in dashboard component useEffect\n4. Redirect unauthorized users to /dashboard"
+    },
+    {
+      "id": "CRITICAL-003",
+      "severity": "CRITICAL",
+      "title": "Supervisor Scope Validation Ambiguous - May Access Non-Assigned Employees",
+      "description": "Supervisor attendance history query allows filtering by department OR specific employee without validating that supervisor is assigned to that employee. Scope is ambiguous: supervisor sees their department by default but can request any employee's data.",
+      "locations": [
+        {
+          "file": "backend-api/src/modules/attendance/routes.js",
+          "lines": "277-293",
+          "issue": "if (targetEmployeeId && isSupervisor) allows any supervisor to request any employee. Should verify supervisor_id match OR admin role only."
+        }
+      ],
+      "impact": "Supervisors may be able to view attendance of employees they don't supervise. Privilege escalation risk.",
+      "recommendation": "Verify supervisor assignment:\n```javascript\nif (targetEmployeeId && isSupervisorOnly) {\n  // Check if supervisor is assigned to this employee\n  const empResult = await query(\n    'SELECT supervisor_id FROM employees WHERE employee_id = $1',\n    [targetEmployeeId]\n  );\n  if (empResult.rows[0]?.supervisor_id !== req.user.id) {\n    return res.status(403).json({ error: 'Not supervisor of this employee' });\n  }\n}\n```"
+    },
+    {
+      "id": "CRITICAL-004",
+      "severity": "CRITICAL",
+      "title": "Mock Data Generators Exposed in Production Code",
+      "description": "Development-only mock data generators (mock-routes.js, testSetup.ts) and development server (dev-server.js) exist in production codebase. If DEV mode is accidentally enabled or mock routes are mounted, system returns fake data.",
+      "locations": [
+        {
+          "file": "backend-api/src/mock-routes.js",
+          "lines": "1-200",
+          "issue": "Complete mock API routes with fake attendance, leave, security data"
+        },
+        {
+          "file": "backend-api/src/dev-server.js",
+          "lines": "1-250",
+          "issue": "Development server with mocked database and Redis connections"
+        },
+        {
+          "file": "frontend/src/utils/testSetup.ts",
+          "lines": "1-200",
+          "issue": "Mock user data (admin, supervisor, employee) and fake attendance records"
+        },
+        {
+          "file": "frontend/src/pages/LoginPage.tsx",
+          "lines": "24-40",
+          "issue": "DEV-only mock login: if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_MOCK_LOGIN === 'true')"
+        }
+      ],
+      "impact": "If development mode is enabled in production, system returns fabricated data instead of real attendance records. Critical data integrity issue.",
+      "recommendation": "1. Remove mock-routes.js and dev-server.js from production builds\n2. Remove VITE_ENABLE_MOCK_LOGIN check from LoginPage\n3. Remove testSetup.ts or mark as test-only\n4. Use environment-based code splitting to exclude dev code from production builds"
+    },
+    {
+      "id": "CRITICAL-005",
+      "severity": "CRITICAL",
+      "title": "No Leave Approval Audit Trail - Missing Approval Tracking",
+      "description": "Leave request approval/rejection endpoints don't consistently log who approved, when, or why. The audit_logs table exists but is not used for leave approvals.",
+      "locations": [
+        {
+          "file": "backend-api/src/modules/leave/routes.js",
+          "lines": "219-266",
+          "issue": "PUT /request/:id/approve updates leave_requests but doesn't log approval to audit_logs"
+        },
+        {
+          "file": "backend-api/src/modules/leave/routes.js",
+          "lines": "267-320",
+          "issue": "PUT /request/:id/reject updates leave_requests but doesn't log rejection reason to audit_logs"
+        }
+      ],
+      "impact": "No compliance audit trail. Cannot determine who approved/rejected leaves, when, or for what reason. Critical for compliance and dispute resolution.",
+      "recommendation": "Add audit logging to approval/rejection endpoints:\n```javascript\nawait logAuditEvent({\n  actorEmployeeId: req.user.employeeId,\n  action: 'leave.request.approve',\n  resourceType: 'leave_request',\n  resourceId: String(leaveId),\n  ipAddress: req.ip,\n  userAgent: req.headers['user-agent'],\n  details: { approvedLeaveType, approvalDate },\n});\n```"
+    }
+  ],
+  "architecturalGaps": [
+    {
+      "id": "ARCH-001",
+      "title": "Missing Employee-to-Supervisor Assignment Management",
+      "description": "The employees table has supervisor_id foreign key, but there are NO endpoints to assign employees to supervisors. Supervisor-employee relationships can only be set via Excel import or direct SQL.",
+      "affectedTables": ["employees (supervisor_id column)"],
+      "missingEndpoints": [
+        "POST /api/admin/supervisors/:supervisorId/assign-employee/:employeeId",
+        "DELETE /api/admin/supervisors/:supervisorId/employees/:employeeId",
+        "GET /api/admin/supervisors/:supervisorId/employees (list assigned)"
+      ]
+    },
+    {
+      "id": "ARCH-002",
+      "title": "No Leave Balance or Leave Policy Enforcement",
+      "description": "The system does not track or enforce leave balances. No leave_policy table defines annual leave allowance, carry-over rules, or leave type limits. Supervisors can approve unlimited leave requests.",
+      "missingTables": ["leave_policy", "leave_balance"],
+      "impact": "Employees could theoretically take unlimited leave. No way to enforce company leave policies.",
+      "recommendation": "Create leave_policy table with: leave_type, annual_days, carry_over_days, requires_approval_after_days"
+    },
+    {
+      "id": "ARCH-003",
+      "title": "No Configurable Work Timings - Hardcoded or Missing",
+      "description": "System has no work_timings table or API. Office hours, break times, and work schedules appear hardcoded or missing. The late arrivals check uses hardcoded '09:00:00' time.",
+      "locations": [
+        {
+          "file": "backend-api/src/modules/reports/routes.js",
+          "lines": "95-98",
+          "issue": "ar.check_in_time::TIME > '09:00:00' — hardcoded office open time"
+        }
+      ],
+      "missingTables": ["work_timings (employee_id, start_time, end_time, schedule_type)"],
+      "impact": "Cannot configure different work timings for different employees/departments. Late arrival detection is inflexible."
+    },
+    {
+      "id": "ARCH-004",
+      "title": "No Department Management or Configuration",
+      "description": "Employees have department field but there's no department management API or department_config table. Departments are free-form strings with no validation.",
+      "missingTables": ["department_config (id, name, description, created_at)"],
+      "missingEndpoints": [
+        "GET /api/admin/departments",
+        "POST /api/admin/departments",
+        "PUT /api/admin/departments/:id"
+      ]
+    },
+    {
+      "id": "ARCH-005",
+      "title": "Hardcoded Office Location - Not Configurable per Employee",
+      "description": "office_locations table exists with 'Main Office' hardcoded. No API to add/modify locations. Geofence validation uses single office location.",
+      "locations": [
+        {
+          "file": "database/init.sql",
+          "lines": "176-177",
+          "issue": "INSERT INTO office_locations (name, latitude, longitude) VALUES ('Main Office', 40.7128, -74.0060)"
+        }
+      ],
+      "missingEndpoints": [
+        "POST /api/admin/locations",
+        "PUT /api/admin/locations/:id",
+        "DELETE /api/admin/locations/:id"
+      ]
+    },
+    {
+      "id": "ARCH-006",
+      "title": "No Employee Onboarding Workflow",
+      "description": "No endpoints for initial setup: password enrollment, face registration, MFA setup. Employees cannot self-onboard. Depends on admin to Excel import then manually contact employee.",
+      "missingEndpoints": [
+        "POST /api/onboarding/setup-password",
+        "POST /api/onboarding/register-face",
+        "GET /api/onboarding/status"
+      ]
+    },
+    {
+      "id": "ARCH-007",
+      "title": "No Supervisor-Employee Hierarchy Validation",
+      "description": "System accepts any supervisor_id in employees table without validating that the supervisor is actually a supervisor role. Employees could theoretically be assigned to employee-role users as 'supervisors'.",
+      "recommendation": "Add constraint: supervisor_id must reference employee with role='supervisor' or role='admin'"
+    }
+  ],
+  "missingTables": [
+    {
+      "id": "TABLE-001",
+      "name": "work_timings",
+      "criticality": "HIGH",
+      "purpose": "Configure work hours, break times, schedule types per employee/department",
+      "proposedSchema": {
+        "id": "SERIAL PRIMARY KEY",
+        "employee_id": "INTEGER REFERENCES employees(id)",
+        "department": "VARCHAR(100)",
+        "start_time": "TIME",
+        "end_time": "TIME",
+        "break_duration_minutes": "INTEGER",
+        "schedule_type": "VARCHAR(50) ENUM('fixed', 'flexible', 'shift')",
+        "effective_from": "DATE",
+        "effective_to": "DATE",
+        "is_active": "BOOLEAN DEFAULT TRUE",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "id": "TABLE-002",
+      "name": "leave_policy",
+      "criticality": "HIGH",
+      "purpose": "Define leave types, annual allocations, carry-over rules, approval requirements",
+      "proposedSchema": {
+        "id": "SERIAL PRIMARY KEY",
+        "leave_type": "VARCHAR(50)",
+        "annual_days": "INTEGER",
+        "carry_over_days": "INTEGER",
+        "carry_over_limit": "INTEGER",
+        "requires_approval": "BOOLEAN",
+        "requires_attachment": "BOOLEAN",
+        "description": "TEXT",
+        "is_active": "BOOLEAN DEFAULT TRUE",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "id": "TABLE-003",
+      "name": "leave_balance",
+      "criticality": "HIGH",
+      "purpose": "Track employee leave balance per type per year",
+      "proposedSchema": {
+        "id": "SERIAL PRIMARY KEY",
+        "employee_id": "INTEGER REFERENCES employees(id)",
+        "leave_type": "VARCHAR(50)",
+        "year": "INTEGER",
+        "total_days": "INTEGER",
+        "used_days": "INTEGER",
+        "pending_days": "INTEGER",
+        "carry_over_days": "INTEGER",
+        "last_updated": "TIMESTAMP",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "id": "TABLE-004",
+      "name": "department_config",
+      "criticality": "MEDIUM",
+      "purpose": "Store department configurations and metadata",
+      "proposedSchema": {
+        "id": "SERIAL PRIMARY KEY",
+        "name": "VARCHAR(100) UNIQUE NOT NULL",
+        "description": "TEXT",
+        "manager_id": "INTEGER REFERENCES employees(id)",
+        "budget": "DECIMAL",
+        "metadata": "JSONB DEFAULT '{}'::jsonb",
+        "is_active": "BOOLEAN DEFAULT TRUE",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "id": "TABLE-005",
+      "name": "supervisor_assignments",
+      "criticality": "MEDIUM",
+      "purpose": "Track which employees are assigned to which supervisors (explicit many-to-one relationship)",
+      "proposedSchema": {
+        "id": "SERIAL PRIMARY KEY",
+        "employee_id": "INTEGER REFERENCES employees(id)",
+        "supervisor_id": "INTEGER REFERENCES employees(id)",
+        "assignment_date": "DATE",
+        "end_date": "DATE",
+        "is_active": "BOOLEAN DEFAULT TRUE",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    }
+  ],
+  "missingRoutes": [
+    {
+      "id": "ROUTE-001",
+      "method": "POST",
+      "path": "/api/admin/employees",
+      "description": "Create new employee",
+      "requiredAuth": "admin",
+      "impact": "Required for employee onboarding"
+    },
+    {
+      "id": "ROUTE-002",
+      "method": "GET",
+      "path": "/api/admin/employees",
+      "description": "List all employees with filtering",
+      "requiredAuth": "admin",
+      "impact": "Required for employee management"
+    },
+    {
+      "id": "ROUTE-003",
+      "method": "PUT",
+      "path": "/api/admin/employees/:id",
+      "description": "Update employee details",
+      "requiredAuth": "admin",
+      "impact": "Required for employee profile updates"
+    },
+    {
+      "id": "ROUTE-004",
+      "method": "DELETE",
+      "path": "/api/admin/employees/:id",
+      "description": "Soft delete / deactivate employee",
+      "requiredAuth": "admin",
+      "impact": "Required for employee offboarding"
+    },
+    {
+      "id": "ROUTE-005",
+      "method": "POST",
+      "path": "/api/admin/supervisors/:supervisorId/assign-employee",
+      "description": "Assign employee to supervisor",
+      "requiredAuth": "admin",
+      "impact": "Required for supervisor-employee relationship management"
+    },
+    {
+      "id": "ROUTE-006",
+      "method": "GET",
+      "path": "/api/admin/supervisors/:supervisorId/employees",
+      "description": "List employees assigned to supervisor",
+      "requiredAuth": "admin",
+      "impact": "Required for viewing supervisor's team"
+    },
+    {
+      "id": "ROUTE-007",
+      "method": "POST",
+      "path": "/api/admin/departments",
+      "description": "Create department",
+      "requiredAuth": "admin",
+      "impact": "Required for department management"
+    },
+    {
+      "id": "ROUTE-008",
+      "method": "GET",
+      "path": "/api/admin/leave-policies",
+      "description": "List leave policies",
+      "requiredAuth": "admin",
+      "impact": "Required for leave policy configuration"
+    },
+    {
+      "id": "ROUTE-009",
+      "method": "POST",
+      "path": "/api/admin/leave-policies",
+      "description": "Create leave policy",
+      "requiredAuth": "admin",
+      "impact": "Required for leave management"
+    },
+    {
+      "id": "ROUTE-010",
+      "method": "POST",
+      "path": "/api/admin/work-timings",
+      "description": "Configure work timings",
+      "requiredAuth": "admin",
+      "impact": "Required for flexible work hour configuration"
+    },
+    {
+      "id": "ROUTE-011",
+      "method": "POST",
+      "path": "/api/admin/locations",
+      "description": "Add office location",
+      "requiredAuth": "admin",
+      "impact": "Required for multi-office geofence support"
+    },
+    {
+      "id": "ROUTE-012",
+      "method": "GET",
+      "path": "/api/onboarding/status",
+      "description": "Check employee onboarding completion",
+      "requiredAuth": "employee",
+      "impact": "Required for self-onboarding workflow"
+    }
+  ],
+  "missingComponents": [
+    {
+      "id": "COMP-001",
+      "name": "ProtectedRoute",
+      "path": "frontend/src/components/ProtectedRoute.tsx (MISSING)",
+      "purpose": "Role-based route protection component",
+      "impact": "Frontend routes not protected from unauthorized access"
+    },
+    {
+      "id": "COMP-002",
+      "name": "AdminPanel",
+      "path": "frontend/src/pages/AdminPanel.tsx (MISSING)",
+      "purpose": "Employee management dashboard for admins",
+      "impact": "No UI for admin user management"
+    },
+    {
+      "id": "COMP-003",
+      "name": "EmployeeManagement",
+      "path": "frontend/src/components/EmployeeManagement.tsx (MISSING)",
+      "purpose": "CRUD operations for employees",
+      "impact": "Cannot manage employees through UI"
+    },
+    {
+      "id": "COMP-004",
+      "name": "LeavePolicyManager",
+      "path": "frontend/src/components/LeavePolicyManager.tsx (MISSING)",
+      "purpose": "Configure leave policies",
+      "impact": "Cannot manage leave policies through UI"
+    },
+    {
+      "id": "COMP-005",
+      "name": "DepartmentManager",
+      "path": "frontend/src/components/DepartmentManager.tsx (MISSING)",
+      "purpose": "Manage departments",
+      "impact": "Cannot manage departments through UI"
+    }
+  ],
+  "fakeDataSources": [
+    {
+      "id": "FAKE-001",
+      "file": "backend-api/src/mock-routes.js",
+      "type": "Backend Mock Routes",
+      "impact": "If imported and used, returns fabricated attendance, leave, and security data",
+      "data": {
+        "attendance": "Mock check-in/check-out times hardcoded to current time",
+        "leave": "Fake leave requests with hardcoded status 'approved'",
+        "security": "Mock spoof attempts and security events",
+        "geofence": "Always returns 'withinGeofence: true'"
+      }
+    },
+    {
+      "id": "FAKE-002",
+      "file": "backend-api/src/dev-server.js",
+      "type": "Development Server",
+      "impact": "If run in production, completely mocks database and Redis",
+      "endpoints": [
+        "POST /api/auth/face-login (returns mock token)",
+        "GET /api/attendance/today (returns mock data)",
+        "POST /api/attendance/check-in (returns success with mock time)"
+      ]
+    },
+    {
+      "id": "FAKE-003",
+      "file": "frontend/src/pages/LoginPage.tsx",
+      "lines": "24-40",
+      "type": "Frontend Mock Login",
+      "trigger": "if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_MOCK_LOGIN === 'true')",
+      "impact": "Can login with any employeeId, auto-detects role from employeeId string",
+      "data": {
+        "mockUser": "Generated from employeeId input",
+        "accessToken": "Mock token - 'mock-access-token'",
+        "refreshToken": "Mock token - 'mock-refresh-token'"
+      }
+    },
+    {
+      "id": "FAKE-004",
+      "file": "frontend/src/utils/testSetup.ts",
+      "type": "Test Mock Data",
+      "impact": "Could be used in tests but should not be in production",
+      "data": {
+        "mockUserData": "Employee: EMP001",
+        "mockAdminData": "Admin: ADM001",
+        "mockSupervisorData": "Supervisor: SUP001",
+        "mockAttendanceRecords": "Fake check-in/out times",
+        "mockLeaveRequests": "Fake approved/pending leaves",
+        "mockSecurityEvents": "Fake spoof attempts"
+      }
+    }
+  ],
+  "permissionEnforcementGaps": [
+    {
+      "id": "PERM-001",
+      "type": "Frontend Route Protection",
+      "issue": "Routes /supervisor and /security not role-protected",
+      "currentBehavior": "Any authenticated user can visit URLs; navbar conditionally shows links",
+      "risk": "Employees can directly access supervisor/security dashboards",
+      "severity": "HIGH"
+    },
+    {
+      "id": "PERM-002",
+      "type": "Excel Upload Authorization",
+      "issue": "POST /api/excel/upload not restricted to admin role",
+      "locations": ["backend-api/src/modules/excel-processing/routes.js:105"],
+      "currentBehavior": "Any authenticated user can upload and create employees",
+      "risk": "Employees can create fake accounts",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "PERM-003",
+      "type": "Supervisor Scope Validation",
+      "issue": "Supervisor can request attendance for any employee without verification",
+      "locations": ["backend-api/src/modules/attendance/routes.js:278-282"],
+      "currentBehavior": "if (targetEmployeeId && isSupervisor) - no relationship check",
+      "risk": "Supervisors can spy on other departments",
+      "severity": "HIGH"
+    },
+    {
+      "id": "PERM-004",
+      "type": "Leave Request Access",
+      "issue": "Leave request detail endpoint checks: employee OR admin OR supervisor (no assignment check)",
+      "locations": ["backend-api/src/modules/leave/routes.js:167-173"],
+      "currentBehavior": "lr.supervisor_id = $2 OR $3::text = 'admin' - but no 'assigned supervisor' check",
+      "risk": "Any supervisor can view any leave request",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "PERM-005",
+      "type": "Security Events Access",
+      "issue": "Security events returned without supervisor scope filtering",
+      "locations": ["backend-api/src/modules/security-monitoring/routes.js:15"],
+      "currentBehavior": "authorizeRole('admin', 'supervisor') - returns ALL events",
+      "risk": "Supervisors see security events for employees they don't manage",
+      "severity": "MEDIUM"
+    }
+  ],
+  "scopeValidationIssues": [
+    {
+      "id": "SCOPE-001",
+      "query": "SELECT ar.* FROM attendance_records ar JOIN employees e WHERE targetEmployeeId AND isSupervisor",
+      "file": "backend-api/src/modules/attendance/routes.js:278-282",
+      "issue": "Allows supervisor to request any employee's attendance without verifying supervisor_id match",
+      "risk": "Supervisors can access attendance of non-supervised employees",
+      "fix": "Check employee.supervisor_id == req.user.id before returning data"
+    },
+    {
+      "id": "SCOPE-002",
+      "query": "SELECT se.* FROM security_events se LEFT JOIN employees e",
+      "file": "backend-api/src/modules/security-monitoring/routes.js:15",
+      "issue": "Returns all security events for any supervisor; no department or assignment filter",
+      "risk": "Supervisors see company-wide security events",
+      "fix": "Filter WHERE se.employee_id IN (SELECT id FROM employees WHERE supervisor_id = $1)"
+    },
+    {
+      "id": "SCOPE-003",
+      "query": "SELECT lr.* FROM leave_requests lr WHERE lr.supervisor_id = $2 OR $3::text = 'admin'",
+      "file": "backend-api/src/modules/leave/routes.js:167-173",
+      "issue": "Ambiguous: supervisor sees their leaves OR all leaves if assigned as supervisor somewhere",
+      "risk": "Leave query returns all leaves where supervisor_id matches, but no validation that supervisor is actually assigned",
+      "fix": "Validate supervisor assignment before returning leave data"
+    },
+    {
+      "id": "SCOPE-004",
+      "query": "SELECT * FROM login_logs ll JOIN employees e ORDER BY timestamp DESC LIMIT $1",
+      "file": "backend-api/src/modules/security-monitoring/routes.js:72",
+      "issue": "Returns all login logs for any supervisor; no scope to assigned employees",
+      "risk": "Supervisors see authentication attempts for entire company",
+      "fix": "Filter WHERE e.supervisor_id = $2 OR req.user.role = 'admin'"
+    },
+    {
+      "id": "SCOPE-005",
+      "query": "SELECT e.department FROM employees e WHERE e.department = $${paramCount}",
+      "file": "backend-api/src/modules/attendance/routes.js:290",
+      "issue": "Department filter works but assumes all supervisors can see entire departments; no manager field",
+      "risk": "Multiple supervisors might manage same department, or supervisor from different department might access",
+      "fix": "Use proper supervisor_id relationship or department_manager field, not free-form department string"
+    }
+  ],
+  "summary": {
+    "overallStatus": "CRITICAL ISSUES PRESENT",
+    "complianceStatus": "NON-COMPLIANT",
+    "dataIntegrityStatus": "AT RISK",
+    "keyFindings": {
+      "rbac_implementation": "3-level hierarchy (admin > supervisor > employee) is implemented in code but NOT enforced consistently across API and frontend",
+      "admin_capabilities": "Admins can create employees only via Excel import; no API for CRUD operations. Cannot assign supervisors or manage departments.",
+      "supervisor_capabilities": "Supervisors can view 'team' attendance but scope validation is weak - they can request any employee's data. No verification of actual assignment.",
+      "employee_restrictions": "Employees correctly restricted to own data in most endpoints, but frontend routes are not protected.",
+      "leave_approval_audit": "NO audit trail for leave approvals/rejections. Only manual 'approval_date' field in leave_requests table.",
+      "data_integrity": "Mock data generators present in production code. DEV mode can return fabricated data if accidentally enabled.",
+      "database_schema": "Missing critical tables: work_timings, leave_policy, leave_balance, department_config, supervisor_assignments. Office location hardcoded.",
+      "api_routes": "No employee management endpoints. No leave policy management. No work timings configuration. No supervisor assignment endpoints.",
+      "frontend_components": "No role-based route guards. AdminPanel and management components missing.",
+      "permission_middleware": "RBAC middleware exists but not applied consistently. Excel upload not restricted. Frontend routes not protected.",
+      "frontend_routing": "Routes render conditionally in navbar but URLs accessible directly without role verification.",
+      "scope_queries": "Multiple queries lack proper supervisor-employee relationship validation."
+    },
+    "riskAssessment": {
+      "criticalityLevel": "CRITICAL",
+      "exposures": [
+        "Employees can access supervisor/security dashboards",
+        "Employees can bulk import fake employees",
+        "Supervisors can access data from other departments/supervisors",
+        "No leave policy enforcement - unlimited leave possible",
+        "No audit trail for leave approvals",
+        "Mock data can be returned as real data"
+      ],
+      "complianceGaps": [
+        "Cannot prove who approved/rejected leaves",
+        "No employee management audit trail",
+        "Missing department/work timing configurations required for compliance",
+        "Scope validation insufficient for multi-supervisor environment"
+      ]
+    },
+    "recommendedActions": [
+      {
+        "priority": "P0-IMMEDIATE",
+        "action": "Implement ProtectedRoute component and gate /supervisor, /security routes by role"
+      },
+      {
+        "priority": "P0-IMMEDIATE",
+        "action": "Restrict /api/excel/upload to admin role only"
+      },
+      {
+        "priority": "P1-URGENT",
+        "action": "Add supervisor assignment validation to all supervisor-accessible queries"
+      },
+      {
+        "priority": "P1-URGENT",
+        "action": "Remove mock-routes.js and dev-server.js from production builds"
+      },
+      {
+        "priority": "P1-URGENT",
+        "action": "Implement employee management API with proper authorization"
+      },
+      {
+        "priority": "P2-HIGH",
+        "action": "Add audit logging to all leave approvals/rejections"
+      },
+      {
+        "priority": "P2-HIGH",
+        "action": "Create missing tables: work_timings, leave_policy, leave_balance"
+      },
+      {
+        "priority": "P2-HIGH",
+        "action": "Implement supervisor assignment verification in scope queries"
+      }
+    ]
+  }
+}

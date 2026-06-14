@@ -1,5 +1,9 @@
 /**
- * V7 — IMPOSSIBLE TRAVEL DETECTION ENGINE
+ * V9 — IMPOSSIBLE TRAVEL DETECTION ENGINE (Database-Persistent)
+ *
+ * Replaces in-memory Map storage with persistent database storage
+ * using the impossible_travel_events and employee_login_locations tables
+ * (added in migration 006).
  *
  * Detects geographically impossible login patterns by comparing
  * consecutive login locations against maximum human travel speed.
@@ -9,33 +13,94 @@
  *
  * Usage:
  *   const { impossibleTravel } = require('./modules/security/impossibleTravel');
- *   const threat = impossibleTravel.check(userId, { lat, lng, timestamp });
+ *   const threat = await impossibleTravel.check(userId, { lat, lng, timestamp });
  */
 const { logger } = require('../../config/logger');
 
 const MAX_SPEED_KMH = 900; // Max plausible speed (commercial jet)
 
+// In-memory cache for last login locations (supplemented by DB)
+const _lastLogins = new Map();
+const _alerts = [];
+const MAX_ALERTS = 1000;
+
 class ImpossibleTravelDetector {
   constructor() {
-    this._lastLogins = new Map(); // userId → { lat, lng, timestamp }
-    this._alerts = [];
-    this._maxAlerts = 1000;
+    this._db = null;
+  }
+
+  _getDB() {
+    if (!this._db) {
+      try {
+        this._db = require('../../config/database');
+      } catch (err) {
+        logger.warn('[ImpossibleTravel] Could not load database module', { error: err.message });
+      }
+    }
+    return this._db;
   }
 
   /**
    * Check a login attempt for impossible travel.
+   * Reads last location from DB, stores new event to DB.
+   * Falls back to memory if DB unavailable.
    * @returns {{ isThreat: boolean, details?: object }}
    */
-  check(userId, location) {
+  async check(userId, location) {
     if (!location || !location.lat || !location.lng) {
       return { isThreat: false };
     }
 
-    const last = this._lastLogins.get(userId);
     const now = location.timestamp || Date.now();
+    let last = null;
 
-    // Store current login
-    this._lastLogins.set(userId, { lat: location.lat, lng: location.lng, timestamp: now });
+    // Try to get last location from database
+    try {
+      const db = this._getDB();
+      if (db) {
+        const result = await db.query(
+          `SELECT last_lat, last_lng, last_login_at
+           FROM employee_login_locations
+           WHERE employee_id = (
+             SELECT id FROM employees WHERE employee_id = $1 LIMIT 1
+           )`,
+          [userId]
+        );
+
+        if (result.rows.length > 0) {
+          const row = result.rows[0];
+          last = {
+            lat: parseFloat(row.last_lat),
+            lng: parseFloat(row.last_lng),
+            timestamp: new Date(row.last_login_at).getTime(),
+          };
+        }
+
+        // Update last login location
+        await db.query(
+          `INSERT INTO employee_login_locations (employee_id, last_lat, last_lng, last_login_at, updated_at)
+           VALUES (
+             (SELECT id FROM employees WHERE employee_id = $1 LIMIT 1),
+             $2, $3, NOW(), NOW()
+           )
+           ON CONFLICT (employee_id) DO UPDATE SET
+             last_lat = EXCLUDED.last_lat,
+             last_lng = EXCLUDED.last_lng,
+             last_login_at = NOW(),
+             updated_at = NOW()`,
+          [userId, location.lat, location.lng]
+        );
+      } else {
+        last = _lastLogins.get(userId) || null;
+      }
+    } catch (err) {
+      logger.warn('[ImpossibleTravel] DB check failed, using memory fallback', { error: err.message });
+      // Fall back to in-memory
+      last = _lastLogins.get(userId) || null;
+    }
+
+    // Update memory cache as backup
+    _lastLogins.set(userId, { lat: location.lat, lng: location.lng, timestamp: now });
 
     if (!last) {
       return { isThreat: false };
@@ -62,9 +127,34 @@ class ImpossibleTravelDetector {
         timestamp: new Date(now).toISOString(),
       };
 
-      this._alerts.push(alert);
-      if (this._alerts.length > this._maxAlerts) {
-        this._alerts = this._alerts.slice(-this._maxAlerts / 2);
+      // Store alert in database
+      try {
+        const db = this._getDB();
+        if (db) {
+          await db.query(
+            `INSERT INTO impossible_travel_events
+               (employee_id_str, from_lat, from_lng, to_lat, to_lng,
+                distance_km, time_diff_minutes, required_speed_kmh, severity)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+              userId,
+              last.lat, last.lng,
+              location.lat, location.lng,
+              alert.distanceKm,
+              alert.timeDiffMinutes,
+              alert.requiredSpeedKmh,
+              alert.severity,
+            ]
+          );
+        }
+      } catch (err) {
+        logger.warn('[ImpossibleTravel] DB alert store failed', { error: err.message });
+      }
+
+      // Memory backup
+      _alerts.push(alert);
+      if (_alerts.length > MAX_ALERTS) {
+        _alerts.splice(0, _alerts.length - MAX_ALERTS / 2);
       }
 
       logger.warn('[ImpossibleTravel] Threat detected', alert);
@@ -88,21 +178,70 @@ class ImpossibleTravelDetector {
 
   _toRad(deg) { return deg * (Math.PI / 180); }
 
-  getAlerts(limit = 50) {
-    return this._alerts.slice(-limit).reverse();
+  async getAlerts(limit = 50) {
+    try {
+      const db = this._getDB();
+      if (db) {
+        const result = await db.query(
+          `SELECT id, employee_id_str as user_id, from_lat, from_lng, to_lat, to_lng,
+                  distance_km, time_diff_minutes, required_speed_kmh, severity, created_at as timestamp
+           FROM impossible_travel_events
+           WHERE resolved = FALSE
+           ORDER BY created_at DESC
+           LIMIT $1`,
+          [limit]
+        );
+        return result.rows;
+      }
+    } catch (err) {
+      logger.warn('[ImpossibleTravel] DB getAlerts failed', { error: err.message });
+    }
+    return _alerts.slice(-limit).reverse();
   }
 
-  getStats() {
+  async getStats() {
+    try {
+      const db = this._getDB();
+      if (db) {
+        const result = await db.query(
+          `SELECT COUNT(*) as total_alerts,
+                  COUNT(*) FILTER (WHERE resolved = FALSE) as unresolved_alerts,
+                  COUNT(DISTINCT employee_id_str) as tracked_users
+           FROM impossible_travel_events`
+        );
+        return {
+          source: 'database',
+          trackedUsers: parseInt(result.rows[0]?.tracked_users || 0),
+          totalAlerts: parseInt(result.rows[0]?.total_alerts || 0),
+          unresolvedAlerts: parseInt(result.rows[0]?.unresolved_alerts || 0),
+        };
+      }
+    } catch (err) {
+      logger.warn('[ImpossibleTravel] Stats DB query failed', { error: err.message });
+    }
     return {
-      trackedUsers: this._lastLogins.size,
-      totalAlerts: this._alerts.length,
-      recentAlerts: this._alerts.slice(-5),
+      source: 'memory',
+      trackedUsers: _lastLogins.size,
+      totalAlerts: _alerts.length,
+      recentAlerts: _alerts.slice(-5),
     };
   }
 
   /** Clear tracking data for a user (e.g., on password reset). */
-  clearUser(userId) {
-    this._lastLogins.delete(userId);
+  async clearUser(userId) {
+    _lastLogins.delete(userId);
+    try {
+      const db = this._getDB();
+      if (db) {
+        await db.query(
+          `DELETE FROM employee_login_locations
+           WHERE employee_id = (SELECT id FROM employees WHERE employee_id = $1 LIMIT 1)`,
+          [userId]
+        );
+      }
+    } catch (err) {
+      logger.warn('[ImpossibleTravel] clearUser DB failed', { error: err.message });
+    }
   }
 }
 

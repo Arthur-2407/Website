@@ -13,6 +13,7 @@ export interface User {
   department: string;
   firstName?: string;
   lastName?: string;
+  faceEnrolled?: boolean;
 }
 
 interface AuthContextType {

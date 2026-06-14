@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { 
+import {
   FaChartBar, 
   FaChartLine, 
   FaChartPie,
@@ -22,8 +22,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { attendanceApi } from '@api/attendanceApi';
-import { leaveApi } from '@api/leaveApi';
+import { reportsApi } from '@api/reportsApi';
 import { useNotification } from '@contexts/NotificationContext';
 
 interface AttendanceStats {
@@ -61,7 +60,7 @@ const ReportsPage: React.FC = () => {
   const [leaveStats, setLeaveStats] = useState<LeaveStats | null>(null);
   const [weeklyData, setWeeklyData] = useState<WeeklyAttendanceData[]>([]);
   const [departmentData, setDepartmentData] = useState<DepartmentData[]>([]);
-  const [_loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState('month');
 
   // Fetch report data
@@ -73,53 +72,14 @@ const ReportsPage: React.FC = () => {
       try {
         setLoading(true);
         
-        // STABILIZATION: Parallel fetch with allSettled
-        const [attendanceResult, leaveResult] = await Promise.allSettled([
-          attendanceApi.getStats(selectedPeriod),
-          leaveApi.getStats(),
-        ]);
+        const response = await reportsApi.getReports(selectedPeriod);
 
         if (abortController.signal.aborted) return;
 
-        // Process attendance stats
-        if (attendanceResult.status === 'fulfilled') {
-          const data: any = attendanceResult.value.data;
-          // STABILIZATION: Normalize stats shape (backend returns both flat and nested)
-          setAttendanceStats(data.stats || {
-            totalCheckins: data.totalCheckins ?? 0,
-            averageHours: data.averageHours ?? '0',
-            geoFenceCompliance: data.geoFenceCompliance ?? '0',
-            lateArrivals: data.lateArrivals ?? 0,
-          });
-        } else {
-          console.error('Attendance stats fetch error:', attendanceResult.reason);
-        }
-
-        // Process leave stats
-        if (leaveResult.status === 'fulfilled') {
-          setLeaveStats(leaveResult.value.data);
-        } else {
-          console.error('Leave stats fetch error:', leaveResult.reason);
-        }
-        
-        // Generate mock weekly data
-        const mockWeeklyData: WeeklyAttendanceData[] = [
-          { week: 'Week 1', hours: 42, lateArrivals: 3 },
-          { week: 'Week 2', hours: 38, lateArrivals: 5 },
-          { week: 'Week 3', hours: 45, lateArrivals: 1 },
-          { week: 'Week 4', hours: 40, lateArrivals: 2 },
-        ];
-        setWeeklyData(mockWeeklyData);
-        
-        // Generate mock department data
-        const mockDepartmentData: DepartmentData[] = [
-          { department: 'Engineering', employees: 25, attendanceRate: 95 },
-          { department: 'Marketing', employees: 15, attendanceRate: 92 },
-          { department: 'Sales', employees: 20, attendanceRate: 88 },
-          { department: 'HR', employees: 8, attendanceRate: 98 },
-          { department: 'Finance', employees: 12, attendanceRate: 90 },
-        ];
-        setDepartmentData(mockDepartmentData);
+        setAttendanceStats(response.data.stats);
+        setLeaveStats(response.data.leave);
+        setWeeklyData(response.data.weekly || []);
+        setDepartmentData(response.data.departments || []);
       } catch (error: any) {
         if (error?.name === 'CanceledError') return;
         console.error('Report data fetch error:', error);
@@ -195,6 +155,12 @@ const ReportsPage: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        {loading && (
+          <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            Loading report data...
+          </div>
+        )}
+
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <motion.div

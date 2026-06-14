@@ -22,6 +22,8 @@ import {
 } from 'recharts';
 import { securityApi } from '@api/securityApi';
 import { attendanceApi } from '@api/attendanceApi';
+import { adminApi, TeamMember } from '@api/adminApi';
+import { faceManagementApi, FaceChangeRequest } from '@api/faceManagementApi';
 import { useNotification } from '@contexts/NotificationContext';
 
 interface SecurityEvent {
@@ -65,16 +67,65 @@ interface TeamAttendance {
 }
 
 const SupervisorDashboard: React.FC = () => {
-  const { showError } = useNotification();
+  const { showError, showSuccess } = useNotification();
   
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
   const [_loginLogs, setLoginLogs] = useState<LoginLog[]>([]);
   const [teamAttendance, setTeamAttendance] = useState<TeamAttendance[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [faceRequests, setFaceRequests] = useState<FaceChangeRequest[]>([]);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [actionNotes, setActionNotes] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
   });
+
+  // Fetch pending face change requests
+  const fetchFaceRequests = async () => {
+    try {
+      const response = await faceManagementApi.getPendingRequests();
+      if (response.data.success) {
+        setFaceRequests(response.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch pending face requests:', err);
+    }
+  };
+
+  const handleApprove = async (id: number) => {
+    try {
+      setApprovingId(id);
+      const response = await faceManagementApi.approveRequest(id, actionNotes);
+      if (response.data.success) {
+        showSuccess('Face change request approved successfully!');
+        setActionNotes('');
+        setApprovingId(null);
+        fetchFaceRequests();
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.message || 'Failed to approve request');
+      setApprovingId(null);
+    }
+  };
+
+  const handleReject = async (id: number) => {
+    try {
+      setRejectingId(id);
+      const response = await faceManagementApi.rejectRequest(id, actionNotes);
+      if (response.data.success) {
+        showSuccess('Face change request rejected successfully!');
+        setActionNotes('');
+        setRejectingId(null);
+        fetchFaceRequests();
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.message || 'Failed to reject request');
+      setRejectingId(null);
+    }
+  };
 
   // STABILIZATION: Fetch supervisor data with AbortController and resilient parallel fetching
   useEffect(() => {
@@ -85,7 +136,7 @@ const SupervisorDashboard: React.FC = () => {
         setLoading(true);
 
         // STABILIZATION: Parallel fetch with allSettled — one failure doesn't block others
-        const [securityResult, loginResult, attendanceResult] = await Promise.allSettled([
+        const [securityResult, loginResult, attendanceResult, teamResult, faceRequestsResult] = await Promise.allSettled([
           securityApi.getSecurityEvents(10),
           securityApi.getLoginLogs(10),
           attendanceApi.getHistory({
@@ -93,6 +144,8 @@ const SupervisorDashboard: React.FC = () => {
             endDate: dateRange.endDate,
             limit: 25,
           }),
+          adminApi.getMyTeam(),
+          faceManagementApi.getPendingRequests(),
         ]);
 
         if (abortController.signal.aborted) return;
@@ -127,6 +180,18 @@ const SupervisorDashboard: React.FC = () => {
           );
         } else {
           console.error('Attendance fetch error:', attendanceResult.reason);
+        }
+
+        if (teamResult.status === 'fulfilled') {
+          setTeamMembers(teamResult.value.data.data || []);
+        } else {
+          console.error('Team members fetch error:', teamResult.reason);
+        }
+
+        if (faceRequestsResult.status === 'fulfilled' && faceRequestsResult.value.data.success) {
+          setFaceRequests(faceRequestsResult.value.data.data);
+        } else {
+          console.error('Face requests fetch error:', faceRequestsResult);
         }
       } catch (error: any) {
         if (error?.name === 'CanceledError') return;
@@ -180,12 +245,30 @@ const SupervisorDashboard: React.FC = () => {
     }
   };
 
-  // Chart data
+  // Chart data — computed from REAL security events (no hardcoding)
   const securityEventData = [
     { name: 'Spoof Attempts', value: securityEvents.filter(e => e.event_type === 'SPOOF_ATTEMPT').length },
     { name: 'Face Mismatches', value: securityEvents.filter(e => e.event_type === 'FACE_MISMATCH').length },
     { name: 'Geo Violations', value: securityEvents.filter(e => e.event_type === 'GEOFENCE_VIOLATION').length },
   ];
+
+  // Compute department breakdown from REAL attendance data
+  const departmentAttendanceData = (() => {
+    const deptMap: Record<string, { present: number; absent: number }> = {};
+    teamAttendance.forEach(a => {
+      const dept = a.employee?.department || 'Unknown';
+      if (!deptMap[dept]) deptMap[dept] = { present: 0, absent: 0 };
+      if (a.check_out_time === null) {
+        deptMap[dept].present += 1;
+      } else {
+        deptMap[dept].absent += 1;
+      }
+    });
+    return Object.entries(deptMap).map(([department, counts]) => ({
+      department,
+      ...counts,
+    }));
+  })();
 
   const COLORS = ['#ef4444', '#f59e0b', '#3b82f6'];
 
@@ -200,7 +283,7 @@ const SupervisorDashboard: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        {/* Stats Overview */}
+        {/* Stats Overview — All metrics from real API data */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <motion.div
             whileHover={{ y: -5 }}
@@ -212,7 +295,9 @@ const SupervisorDashboard: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Team Size</p>
-                <p className="text-2xl font-bold text-gray-900">25</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : (teamMembers.length > 0 ? teamMembers.length : '—')}
+                </p>
               </div>
             </div>
           </motion.div>
@@ -260,8 +345,10 @@ const SupervisorDashboard: React.FC = () => {
                 <FaUserClock className="text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Late Arrivals</p>
-                <p className="text-2xl font-bold text-gray-900">3</p>
+                <p className="text-sm font-medium text-gray-600">Pending Leave</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {loading ? '...' : teamMembers.filter(m => m.pending_leave_status === 'pending').length}
+                </p>
               </div>
             </div>
           </motion.div>
@@ -273,54 +360,167 @@ const SupervisorDashboard: React.FC = () => {
           <div className="bg-white rounded-xl shadow p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Security Events Distribution</h2>
             <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={securityEventData}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={true}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                    nameKey="name"
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {securityEventData.map((_entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+              {securityEventData.every(d => d.value === 0) ? (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  <div className="text-center">
+                    <FaUserCheck className="mx-auto text-4xl text-green-300 mb-2" />
+                    <p>No Security Events</p>
+                    <p className="text-sm text-gray-400 mt-1">System is operating normally</p>
+                  </div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={securityEventData.filter(d => d.value > 0)}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={true}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                      nameKey="name"
+                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                    >
+                      {securityEventData.filter(d => d.value > 0).map((_entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
-          {/* Team Attendance Chart */}
+          {/* Team Attendance Chart — Real data, no hardcoding */}
           <div className="bg-white rounded-xl shadow p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Team Attendance Today</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Team Attendance by Department</h2>
             <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={[
-                    { department: 'Engineering', present: 8, absent: 2 },
-                    { department: 'Marketing', present: 5, absent: 1 },
-                    { department: 'Sales', present: 7, absent: 3 },
-                    { department: 'HR', present: 3, absent: 0 },
-                  ]}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="department" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="present" name="Present" fill="#10b981" />
-                  <Bar dataKey="absent" name="Absent" fill="#ef4444" />
-                </BarChart>
-              </ResponsiveContainer>
+              {departmentAttendanceData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  <div className="text-center">
+                    <FaUsers className="mx-auto text-4xl text-gray-300 mb-2" />
+                    <p>No Data Available</p>
+                    <p className="text-sm text-gray-400 mt-1">No attendance records for selected period</p>
+                  </div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={departmentAttendanceData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="department" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="present" name="Present" fill="#10b981" />
+                    <Bar dataKey="absent" name="Absent" fill="#ef4444" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
+        </div>
+
+        {/* Pending Face Approvals Panel */}
+        <div className="bg-white rounded-xl shadow overflow-hidden mb-8">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-bold text-gray-900">Pending Face Change Approvals</h2>
+            <p className="text-gray-500 text-sm mt-1">Review and approve biometric face registration requests from your team members.</p>
+          </div>
+          
+          {faceRequests.length === 0 ? (
+            <div className="py-12 text-center">
+              <FaUserCheck className="mx-auto text-4xl text-green-300" />
+              <p className="mt-4 text-gray-600">No pending face change requests.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-200">
+              {faceRequests.map((request) => (
+                <div key={request.id} className="p-6 flex flex-col md:flex-row md:items-center md:justify-between hover:bg-gray-50 transition-colors">
+                  <div className="mb-4 md:mb-0">
+                    <div className="flex items-center space-x-3">
+                      <span className="font-semibold text-gray-900">{request.first_name} {request.last_name}</span>
+                      <span className="text-xs text-gray-500">({request.employee_id})</span>
+                      <span className={`px-2 py-0.5 text-xs rounded-full font-bold ${
+                        request.request_type === 'ADD' 
+                          ? 'bg-green-100 text-green-800' 
+                          : request.request_type === 'DELETE' 
+                            ? 'bg-red-100 text-red-800' 
+                            : 'bg-blue-100 text-blue-800'
+                      }`}>
+                        {request.request_type} FACE
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-500 mt-1">
+                      Department: {request.department} &bull; Requested on {new Date(request.created_at).toLocaleDateString()}
+                    </div>
+                    {request.requester_employee_id && request.requester_employee_id !== request.employee_id && (
+                      <div className="text-xs text-indigo-600 mt-1">
+                        Requested by: {request.requester_first_name} {request.requester_last_name} ({request.requester_employee_id})
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
+                    {approvingId === request.id || rejectingId === request.id ? (
+                      <div className="flex flex-col space-y-2 w-full sm:w-64">
+                        <input
+                          type="text"
+                          placeholder="Add notes/reason (optional)..."
+                          value={actionNotes}
+                          onChange={(e) => setActionNotes(e.target.value)}
+                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm w-full focus:ring-1 focus:ring-blue-500"
+                        />
+                        <div className="flex justify-end space-x-2">
+                          <button
+                            onClick={() => {
+                              setApprovingId(null);
+                              setRejectingId(null);
+                              setActionNotes('');
+                            }}
+                            className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg font-medium"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => approvingId === request.id ? handleApprove(request.id) : handleReject(request.id)}
+                            className={`px-3 py-1 text-white text-xs rounded-lg font-medium ${
+                              approvingId === request.id ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                            }`}
+                          >
+                            Confirm
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            setApprovingId(request.id);
+                            setRejectingId(null);
+                          }}
+                          className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRejectingId(request.id);
+                            setApprovingId(null);
+                          }}
+                          className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Security Events Table */}
@@ -403,7 +603,7 @@ const SupervisorDashboard: React.FC = () => {
                           <div className="mr-2">
                             {getEventTypeIcon(event.event_type)}
                           </div>
-                          <span>{event.event_type.replace('_', ' ')}</span>
+                          <span>{event.event_type.replace(/_/g, ' ')}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

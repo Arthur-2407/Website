@@ -1,0 +1,12 @@
+{
+  "audit": [
+    {
+      "check": "schema migrations up-to-date",
+      "status": "passed"
+    },
+    {
+      "check": "approval workflow database tables",
+      "status": "created"
+    }
+  ]
+}

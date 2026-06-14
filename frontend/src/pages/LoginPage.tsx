@@ -16,49 +16,50 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  React.useEffect(() => {
+    const checkBootstrap = async () => {
+      try {
+        const res = await api.get<{ success: boolean; bootstrapMode: boolean }>('/auth/bootstrap/status');
+        if (res.data.success && res.data.bootstrapMode) {
+          navigate('/setup/admin-face', { replace: true });
+        }
+      } catch (err) {
+        console.error('Failed to check bootstrap status', err);
+      }
+    };
+    checkBootstrap();
+  }, [navigate]);
+
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      if (import.meta.env.DEV) {
-        // ── DEV ONLY: mock login so local dev works without backend ──
-        await new Promise<void>((resolve) => setTimeout(resolve, 800));
-        const mockUser: User = {
-          id: 1,
-          employeeId: employeeId,
-          email: `${employeeId}@company.com`,
-          role: 'employee',
-          department: 'Engineering',
-        };
-        const tokens = {
-          accessToken: 'mock-access-token',
-          refreshToken: 'mock-refresh-token',
-        };
-        login(tokens, mockUser);
-        showSuccess('Login successful! (DEV mode)');
+      // ── AUTHENTICATE WITH BACKEND ──
+      const response = await api.post<{
+        success: boolean;
+        tokens: { accessToken: string; refreshToken: string };
+        employee: User;
+        message?: string;
+      }>('/auth/login', { employeeId, password });
+
+      if (response.data.success) {
+        login(response.data.tokens, response.data.employee);
+        showSuccess('Login successful!');
         navigate('/dashboard');
       } else {
-        // ── PRODUCTION: call real password-login endpoint ──
-        // Replace '/auth/login' with the actual backend route when implemented.
-        const response = await api.post<{
-          success: boolean;
-          tokens: { accessToken: string; refreshToken: string };
-          employee: User;
-          message?: string;
-        }>('/auth/login', { employeeId, password });
-
-        if (response.data.success) {
-          login(response.data.tokens, response.data.employee);
-          showSuccess('Login successful!');
-          navigate('/dashboard');
-        } else {
-          showError(response.data.message || 'Login failed. Please try again.');
-        }
+        showError(response.data.message || 'Login failed. Please try again.');
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      showError(error.response?.data?.message || 'Login failed. Please try again.');
+      if (error.response?.status === 403 && error.response?.data?.code === 'FACE_AUTHENTICATION_REQUIRED') {
+        showSuccess('Face authentication is required for this account. Redirecting to Face Login...');
+        setTimeout(() => {
+          navigate('/face-login', { state: { employeeId, requirePassword: true } });
+        }, 1500);
+      } else {
+        showError(error.response?.data?.message || 'Login failed. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }

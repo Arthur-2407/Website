@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-securepassword123}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
     networks:
       - attendance-network
     restart: unless-stopped
@@ -71,7 +71,7 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
       - RUN_MIGRATIONS=true
     volumes:
-      - ./backend-api/logs:/app/logs
+      - backend_api_logs:/app/logs
     networks:
       - attendance-network
     depends_on:
@@ -99,7 +99,7 @@ services:
       - MODEL_PATH=/app/models
     volumes:
       - face_ai_models:/app/models
-      - ./face-ai-service/logs:/app/logs
+      - face_ai_logs:/app/logs
     networks:
       - attendance-network
     depends_on:
@@ -137,12 +137,13 @@ services:
 
   # Nginx Reverse Proxy
   nginx:
-    image: nginx:alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.prod
     container_name: attendance-nginx-prod
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - ./nginx/logs:/var/log/nginx
+      - nginx_ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
     ports:
       - "80:80"
       - "443:443"
@@ -172,4 +173,12 @@ volumes:
   redis_data:
     driver: local
   face_ai_models:
+    driver: local
+  face_ai_logs:
+    driver: local
+  backend_api_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  nginx_ssl:
     driver: local

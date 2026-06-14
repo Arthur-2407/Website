@@ -4,6 +4,7 @@ import { AxiosResponse } from 'axios';
 export interface FaceLoginData {
   frames: string[];
   employeeId: string;
+  password?: string;
   challengeType?: string;
   location?: {
     latitude: number;
@@ -60,6 +61,22 @@ export interface RefreshTokenResponse {
   };
 }
 
+export interface BootstrapStatusResponse {
+  success: boolean;
+  bootstrapMode: boolean;
+}
+
+export interface BootstrapSetupData {
+  password?: string;
+  frames: string[];
+}
+
+export interface BootstrapSetupResponse {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+
 export const authApi = {
   faceLogin: async (data: FaceLoginData, signal?: AbortSignal): Promise<AxiosResponse<FaceLoginResponse>> => {
     const response = await api.post<FaceLoginResponse>('/auth/face-login', data, { signal });
@@ -78,6 +95,16 @@ export const authApi = {
 
   logout: async (): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
     const response = await api.post('/auth/logout');
+    return response;
+  },
+
+  checkBootstrapStatus: async (): Promise<AxiosResponse<BootstrapStatusResponse>> => {
+    const response = await api.get<BootstrapStatusResponse>('/auth/bootstrap/status');
+    return response;
+  },
+
+  bootstrapSetup: async (data: BootstrapSetupData): Promise<AxiosResponse<BootstrapSetupResponse>> => {
+    const response = await api.post<BootstrapSetupResponse>('/auth/bootstrap/setup', data);
     return response;
   },
 };

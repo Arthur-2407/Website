@@ -2,8 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { query } = require('../../config/database');
 const { logger } = require('../../config/logger');
+const { authenticateToken } = require('../../middleware/authMiddleware');
 
-// GET /api/work-report - Get work reports for authenticated employee
+// All work-report routes require authentication
+router.use(authenticateToken);
+
+// GET /api/work-report - Get work reports for the authenticated user
 router.get('/', async (req, res) => {
   try {
     const employeeId = req.user.id;

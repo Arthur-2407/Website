@@ -13,6 +13,8 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { attendanceApi } from '@api/attendanceApi';
 import { securityApi } from '@api/securityApi';
+import { faceManagementApi } from '@api/faceManagementApi';
+import FaceCamera from '@components/camera/FaceCamera';
 import { useAuth } from '@contexts/AuthContext';
 import { useNotification } from '@contexts/NotificationContext';
 import { locationService } from '@services/locationService';
@@ -50,6 +52,67 @@ const DashboardPage: React.FC = () => {
   // STABILIZATION: Per-section loading states for partial render support
   const [statsLoading, setStatsLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(true);
+  // Weekly chart data from real attendance history
+  const [weeklyChartData, setWeeklyChartData] = useState<{ day: string; hours: number }[]>([]);
+
+  // Face Enrollment States
+  const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
+  const [faceFrames, setFaceFrames] = useState<{ data: string; timestamp: number }[]>([]);
+  const [isFaceSubmitting, setIsFaceSubmitting] = useState(false);
+  const [faceEnrolled, setFaceEnrolled] = useState<boolean>((user as any)?.faceEnrolled || false);
+
+  useEffect(() => {
+    if (user) {
+      setFaceEnrolled(!!(user as any).faceEnrolled);
+    }
+  }, [user]);
+
+  const handleFaceFrameCapture = (frame: string) => {
+    const base64Data = frame.replace('data:image/jpeg;base64,', '');
+    setFaceFrames((prev) => [
+      ...prev.slice(-19), // Keep only last 19 frames
+      {
+        data: base64Data,
+        timestamp: Date.now(),
+      },
+    ]);
+  };
+
+  const handleSubmitFaceRequest = async () => {
+    if (!user) return;
+    if (faceFrames.length < 10) {
+      showError('Please wait for at least 10 frames to be captured.');
+      return;
+    }
+
+    try {
+      setIsFaceSubmitting(true);
+      const requestType = faceEnrolled ? 'UPDATE' : 'ADD';
+      const response = await faceManagementApi.submitRequest({
+        employeeId: user.employeeId,
+        requestType,
+        frames: faceFrames.map(f => f.data),
+      });
+
+      if (response.data.success) {
+        if (response.data.instant) {
+          showSuccess('Face profile registered instantly!');
+          setFaceEnrolled(true);
+        } else {
+          showSuccess('Face change request submitted successfully and is pending approval.');
+        }
+        setIsFaceModalOpen(false);
+        setFaceFrames([]);
+      } else {
+        showError(response.data.message || 'Failed to submit face request.');
+      }
+    } catch (err: any) {
+      console.error('Face submit error:', err);
+      showError(err.response?.data?.message || 'Failed to submit request. Please try again.');
+    } finally {
+      setIsFaceSubmitting(false);
+    }
+  };
 
   // STABILIZATION: Parallelized fetch with Promise.allSettled — one failure no longer blocks others
   const fetchDashboardData = async (signal: AbortSignal) => {
@@ -116,8 +179,50 @@ const DashboardPage: React.FC = () => {
         }
       });
 
+    // Fetch real weekly attendance history for chart
+    const weeklyPromise = attendanceApi.getHistory({
+      startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      limit: 100,
+    })
+      .then((resp) => {
+        if (!signal.aborted) {
+          const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const dayHoursMap: Record<string, number> = {};
+
+          (resp.data.records || []).forEach((record: any) => {
+            const day = dayNames[new Date(record.check_in_time).getDay()];
+            // Parse work_hours interval if available, otherwise compute from check_in/out
+            let hours = 0;
+            if (record.work_hours) {
+              // work_hours may be ISO interval like "08:30:00" or PostgreSQL interval
+              const parts = String(record.work_hours).split(':');
+              if (parts.length >= 2) {
+                hours = parseFloat(parts[0]) + parseFloat(parts[1]) / 60;
+              }
+            } else if (record.check_out_time) {
+              const diff = new Date(record.check_out_time).getTime() - new Date(record.check_in_time).getTime();
+              hours = diff / (1000 * 60 * 60);
+            }
+            // Average hours per day
+            if (!dayHoursMap[day]) dayHoursMap[day] = 0;
+            dayHoursMap[day] = Math.max(dayHoursMap[day], parseFloat(hours.toFixed(1)));
+          });
+
+          const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+          const chartData = orderedDays.map(d => ({ day: d, hours: dayHoursMap[d] || 0 }));
+          setWeeklyChartData(chartData);
+        }
+      })
+      .catch((err) => {
+        if (err?.name !== 'CanceledError' && !signal.aborted) {
+          console.error('Weekly history fetch error:', err);
+          // Leave chart empty — show empty state
+        }
+      });
+
     // STABILIZATION: All fetches run in parallel — one failure doesn't block others
-    await Promise.allSettled([statsPromise, eventsPromise, locationPromise, todayPromise]);
+    await Promise.allSettled([statsPromise, eventsPromise, locationPromise, todayPromise, weeklyPromise]);
   };
 
   // Fetch dashboard data
@@ -216,18 +321,15 @@ const DashboardPage: React.FC = () => {
     }
   };
 
-  // Chart data — uses API data when available, falls back to sample data
-  const attendanceChartData = [
-    { day: 'Mon', hours: 8.5 },
-    { day: 'Tue', hours: 9.2 },
-    { day: 'Wed', hours: 7.8 },
-    { day: 'Thu', hours: 8.9 },
-    { day: 'Fri', hours: 8.3 },
-  ];
+  // Chart data — weeklyChartData is built from real API attendance records
+  const attendanceChartData = weeklyChartData.length > 0
+    ? weeklyChartData
+    : [{ day: 'Mon', hours: 0 }, { day: 'Tue', hours: 0 }, { day: 'Wed', hours: 0 }, { day: 'Thu', hours: 0 }, { day: 'Fri', hours: 0 }];
 
+  const geoCompliance = attendanceStats ? parseFloat(attendanceStats.geoFenceCompliance) || 0 : 0;
   const complianceData = [
-    { name: 'Within Fence', value: attendanceStats ? parseFloat(attendanceStats.geoFenceCompliance) || 92 : 92 },
-    { name: 'Outside Fence', value: attendanceStats ? (100 - (parseFloat(attendanceStats.geoFenceCompliance) || 92)) : 8 },
+    { name: 'Within Fence', value: geoCompliance },
+    { name: 'Outside Fence', value: Math.max(0, 100 - geoCompliance) },
   ];
 
   const COLORS = ['#10B981', '#EF4444'];
@@ -461,6 +563,47 @@ const DashboardPage: React.FC = () => {
               )}
             </div>
 
+            {/* Face Profile Widget */}
+            <div className="bg-white rounded-xl shadow p-6">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Face Profile</h2>
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mb-6">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Status</p>
+                  <div className="flex items-center mt-1">
+                    {faceEnrolled ? (
+                      <>
+                        <span className="h-2.5 w-2.5 rounded-full bg-green-500 mr-2" />
+                        <span className="text-sm font-bold text-green-800 bg-green-100 px-2.5 py-0.5 rounded-full">
+                          Enrolled
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 mr-2" />
+                        <span className="text-sm font-bold text-yellow-800 bg-yellow-100 px-2.5 py-0.5 rounded-full">
+                          Not Enrolled
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="p-3 rounded-full bg-blue-50 text-blue-600">
+                  <FaCamera className="text-xl" />
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setFaceFrames([]);
+                  setIsFaceModalOpen(true);
+                }}
+                className="w-full flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-lg transition-colors font-medium"
+              >
+                <FaCamera className="mr-2" />
+                {faceEnrolled ? 'Request Face Update' : 'Enroll Face Profile'}
+              </button>
+            </div>
+
             {/* Geo-fence Compliance */}
             <div className="bg-white rounded-xl shadow p-6">
               <h2 className="text-xl font-bold text-gray-900 mb-4">Geo-fence Compliance</h2>
@@ -494,6 +637,75 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
       </main>
+      {/* Face Enrollment Modal */}
+      {isFaceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+            <h3 className="text-2xl font-bold text-gray-800 mb-2">
+              {faceEnrolled ? 'Request Face Profile Update' : 'Enroll Face Profile'}
+            </h3>
+            <p className="text-gray-600 text-sm mb-4">
+              Please position your face clearly in the frame. We will capture multiple frames to compute your secure biometric signature.
+            </p>
+
+            <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden mb-4 relative max-h-72">
+              <FaceCamera
+                onCapture={handleFaceFrameCapture}
+                className="w-full h-full"
+                autoCapture={true}
+                captureInterval={150}
+                showControls={false}
+              />
+            </div>
+
+            {/* Progress Bar */}
+            <div className="mb-6">
+              <div className="flex justify-between text-sm mb-1 text-gray-700">
+                <span>Capture Progress</span>
+                <span className="font-semibold">{faceFrames.length}/20 frames</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min((faceFrames.length / 20) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                type="button"
+                disabled={isFaceSubmitting}
+                onClick={() => {
+                  setIsFaceModalOpen(false);
+                  setFaceFrames([]);
+                }}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isFaceSubmitting || faceFrames.length < 10}
+                onClick={handleSubmitFaceRequest}
+                className="px-5 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+              >
+                {isFaceSubmitting ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Submitting...
+                  </>
+                ) : (
+                  'Submit Request'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

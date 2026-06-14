@@ -1,0 +1,26 @@
+[
+  {
+    "file": "backend-api/Dockerfile.prod",
+    "change": "Created logs directory before running chown",
+    "reason": "Fix EACCES logs directory permission error",
+    "timestamp": "2026-06-14T10:40:35.850Z"
+  },
+  {
+    "file": "backend-api/src/migrations/009_face_approval_workflow.up.sql",
+    "change": "Added environment condition to skip seeding default face embeddings in production",
+    "reason": "Secure production startup with unseeded admin credentials",
+    "timestamp": "2026-06-14T10:40:35.851Z"
+  },
+  {
+    "file": "backend-api/src/modules/auth/routes.js",
+    "change": "Implemented /bootstrap/status and /bootstrap/setup endpoints",
+    "reason": "Support secure first-time setups and admin passwords",
+    "timestamp": "2026-06-14T10:40:35.851Z"
+  },
+  {
+    "file": "frontend/src/pages/BootstrapSetupPage.tsx",
+    "change": "Created setup page component",
+    "reason": "UI for admin initialization",
+    "timestamp": "2026-06-14T10:40:35.851Z"
+  }
+]

@@ -53,7 +53,11 @@ async function runMigrations() {
 
       logger.info('Applying database migration', { id });
       await client.query('BEGIN');
-      await client.query(sql);
+      // SECURITY: Interpolate environment variables safely after checksum calculation
+      const interpolatedSql = sql.replace(/\$\{([A-Za-z0-9_]+)\}/g, (match, p1) => {
+        return process.env[p1] !== undefined ? process.env[p1] : match;
+      });
+      await client.query(interpolatedSql);
       await client.query(
         'INSERT INTO schema_migrations (id, name, checksum) VALUES ($1, $2, $3)',
         [id, file, fileChecksum]

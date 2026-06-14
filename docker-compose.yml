@@ -81,6 +81,12 @@ services:
       - JWT_REFRESH_EXPIRY=${JWT_REFRESH_EXPIRY:-7d}
       - FACE_AI_SERVICE_URL=${FACE_AI_SERVICE_URL:-http://face-ai-service:8000}
       - FRONTEND_URL=http://localhost:3000
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-500}
+      - AUTH_RATE_LIMIT_WINDOW_MS=${AUTH_RATE_LIMIT_WINDOW_MS:-60000}
+      - AUTH_RATE_LIMIT_MAX_REQUESTS=${AUTH_RATE_LIMIT_MAX_REQUESTS:-200}
+      - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-100}
+      - LOGIN_RATE_WINDOW_MS=${LOGIN_RATE_WINDOW_MS:-60000}
     volumes:
       - ./backend-api:/app
       - /app/node_modules
@@ -96,7 +102,7 @@ services:
       face-ai-service:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD-SHELL", "node -e \"const http=require('http'); const req=http.get('http://localhost:3001/health', res => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(5000, () => { req.destroy(); process.exit(1); });\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -135,6 +141,12 @@ services:
     depends_on:
       - frontend
       - backend-api
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/health && wget -q -O /dev/null http://localhost/frontend-status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   attendance-network:

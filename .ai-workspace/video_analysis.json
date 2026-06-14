@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "issue": "UI transition alignment",
+      "status": "fixed",
+      "file": "frontend/src/pages/LoginPage.tsx"
+    },
+    {
+      "issue": "Face login frame handling",
+      "status": "fixed",
+      "file": "frontend/src/components/FaceLogin.tsx"
+    }
+  ]
+}

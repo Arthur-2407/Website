@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "topic": "Admin bootstrapping without seed face in production",
+      "status": "completed"
+    },
+    {
+      "topic": "Simulated liveness detection with multi-frame vectors",
+      "status": "completed"
+    }
+  ]
+}

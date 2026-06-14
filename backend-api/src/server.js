@@ -34,11 +34,15 @@ const authRoutes = require('./modules/auth/routes');
 const attendanceRoutes = require('./modules/attendance/routes');
 const leaveRoutes = require('./modules/leave/routes');
 const workReportRoutes = require('./modules/work-report/routes');
+const reportsRoutes = require('./modules/reports/routes');
 const excelRoutes = require('./modules/excel-processing/routes');
 const notificationRoutes = require('./modules/notification/routes');
 const geofenceRoutes = require('./modules/geofence/routes');
 const securityRoutes = require('./modules/security-monitoring/routes');
 const mfaRoutes = require('./modules/auth/mfaRoutes');
+const adminRoutes = require('./modules/admin/routes');
+const locationRoutes = require('./modules/locations/routes');
+const faceManagementRoutes = require('./modules/face-management/routes');
 
 // Import middleware
 const { errorHandler } = require('./middleware/errorHandler');
@@ -143,14 +147,24 @@ app.use('/api/auth', authLimiter, authRoutes);
 // Protected routes (require authentication)
 app.use('/api/attendance', authenticateToken, attendanceRoutes);
 app.use('/api/leave', authenticateToken, leaveRoutes);
+app.use('/api/reports', authenticateToken, reportsRoutes);
 app.use('/api/work-report', authenticateToken, workReportRoutes);
 app.use('/api/excel', authenticateToken, excelRoutes);
 app.use('/api/geofence', authenticateToken, geofenceRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/security', authenticateToken, securityRoutes);
 
+// ADMIN MANAGEMENT ROUTES
+app.use('/api/admin', authenticateToken, adminRoutes);
+
+// LOCATION MANAGEMENT ROUTES
+app.use('/api/locations', authenticateToken, locationRoutes);
+
 // V5: MFA routes (auth required)
 app.use('/api/auth/mfa', authenticateToken, mfaRoutes);
+
+// FACE MANAGEMENT & APPROVAL ROUTES
+app.use('/api', faceManagementRoutes);
 
 // V3: Telemetry and system status endpoints
 app.use('/api/telemetry', authenticateToken, telemetryRoutes);
@@ -176,7 +190,7 @@ app.get('/api/system/traces', authenticateToken, requireRole('supervisor'), (req
 
 // V8: Frontend error telemetry forwarding endpoint
 // The frontend logger (utils/logger.ts) sends errors/warnings here for centralized monitoring.
-app.post('/api/dev/frontend-error', express.json(), (req, res) => {
+function frontendErrorHandler(req, res) {
   const entry = req.body;
   if (entry && entry.level && entry.message) {
     logger.warn('[Frontend Error]', {
@@ -190,7 +204,10 @@ app.post('/api/dev/frontend-error', express.json(), (req, res) => {
     });
   }
   res.status(204).end();
-});
+}
+
+app.post('/api/dev/frontend-error', frontendErrorHandler);
+app.post('/api/api/dev/frontend-error', frontendErrorHandler);
 
 // V8: Prometheus metrics endpoint (unauthenticated for scraper access)
 // Full metrics from the Prometheus registry + collector

@@ -6,6 +6,7 @@ import {
   FaChartBar, 
   FaShield,
   FaUsers,
+  FaBuilding,
   FaRightFromBracket
 } from 'react-icons/fa6';
 import { useAuth } from '@contexts/AuthContext';
@@ -33,6 +34,7 @@ const Navbar = () => {
       : []),
     ...(user?.role === 'admin' 
       ? [
+          { name: 'Admin', href: '/admin', icon: <FaBuilding /> },
           { name: 'Security', href: '/security', icon: <FaShield /> },
         ] 
       : []),

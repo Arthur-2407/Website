@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-06-14T10:40:35.851Z",
+    "task": "Implement secure MFA, admin face setup, and bootstrap mode",
+    "files": [
+      "routes.js",
+      "authApi.ts",
+      "router.tsx",
+      "LoginPage.tsx",
+      "BootstrapSetupPage.tsx"
+    ],
+    "decisions": [
+      "Skiped default face in production",
+      "Added mandatory combined face+password for administrative roles"
+    ],
+    "errors": [
+      "EACCES in backend-api log volume mount (fixed)"
+    ]
+  }
+]

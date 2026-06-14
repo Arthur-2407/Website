@@ -86,6 +86,22 @@ router.post('/request', async (req, res) => {
       details: { leaveType, startDate, endDate, days },
     });
 
+    // Record in leave_approval_history for full audit chain
+    try {
+      await query(
+        `INSERT INTO leave_approval_history
+           (leave_request_id, action, actor_employee_id, actor_role,
+            previous_status, new_status, reason, ip_address, user_agent)
+         VALUES ($1, 'submit', $2, $3, NULL, 'pending', $4, $5::inet, $6)`,
+        [
+          result.rows[0].id, req.user.id, req.user.role,
+          reason, req.ip, req.headers['user-agent'] || null,
+        ]
+      );
+    } catch (histErr) {
+      logger.warn('Leave history submit record failed', { error: histErr.message });
+    }
+
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     logger.error('Leave request submit error', { error: error.message, userId: req.user?.id });
@@ -223,25 +239,47 @@ router.put('/request/:id/approve', async (req, res) => {
     }
 
     const id = Number.parseInt(req.params.id, 10);
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : '';
+
+    // Update leave request
     const result = await query(
       `UPDATE leave_requests lr
        SET status = 'approved',
-           approval_date = NOW(),
+           approver_id = $2,
+           approval_timestamp = NOW(),
            rejection_reason = NULL,
            updated_at = NOW()
        WHERE lr.id = $1
          AND lr.status = 'pending'
-         AND ($2::text = 'admin' OR lr.supervisor_id = $3)
+         AND ($3::text = 'admin' OR lr.supervisor_id = $2)
        RETURNING *`,
-      [id, req.user.role, req.user.id]
+      [id, req.user.id, req.user.role]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Pending leave request not found' });
     }
 
+    const leaveRecord = result.rows[0];
+
+    // Log approval in leave_approval_history
+    try {
+      await query(
+        `INSERT INTO leave_approval_history
+           (leave_request_id, action, actor_employee_id, actor_role,
+            previous_status, new_status, reason, ip_address, user_agent)
+         VALUES ($1, 'approve', $2, $3, 'pending', 'approved', $4, $5::inet, $6)`,
+        [
+          id, req.user.id, req.user.role, reason || null,
+          req.ip, req.headers['user-agent'] || null,
+        ]
+      );
+    } catch (histErr) {
+      logger.warn('Leave approval history record failed', { error: histErr.message });
+    }
+
     await createNotification(
-      result.rows[0].employee_id,
+      leaveRecord.employee_id,
       'Leave approved',
       'Your leave request has been approved.',
       { leaveRequestId: id }
@@ -255,9 +293,16 @@ router.put('/request/:id/approve', async (req, res) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       requestId: req.requestId,
+      details: {
+        leaveType: leaveRecord.leave_type,
+        employeeId: leaveRecord.employee_id,
+        startDate: leaveRecord.start_date,
+        endDate: leaveRecord.end_date,
+        approvedByRole: req.user.role
+      }
     });
 
-    return res.json(result.rows[0]);
+    return res.json(leaveRecord);
   } catch (error) {
     logger.error('Leave approve error', { error: error.message, userId: req.user?.id });
     return res.status(500).json({ success: false, message: 'Failed to approve leave request' });
@@ -277,25 +322,45 @@ router.put('/request/:id/reject', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Rejection reason is required' });
     }
 
+    // Update leave request
     const result = await query(
       `UPDATE leave_requests lr
        SET status = 'rejected',
-           approval_date = NOW(),
-           rejection_reason = $4,
+           approver_id = $2,
+           approval_timestamp = NOW(),
+           rejection_reason = $3,
            updated_at = NOW()
        WHERE lr.id = $1
          AND lr.status = 'pending'
-         AND ($2::text = 'admin' OR lr.supervisor_id = $3)
+         AND ($4::text = 'admin' OR lr.supervisor_id = $2)
        RETURNING *`,
-      [id, req.user.role, req.user.id, reason]
+      [id, req.user.id, reason, req.user.role]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Pending leave request not found' });
     }
 
+    const leaveRecord = result.rows[0];
+
+    // Log rejection in leave_approval_history
+    try {
+      await query(
+        `INSERT INTO leave_approval_history
+           (leave_request_id, action, actor_employee_id, actor_role,
+            previous_status, new_status, reason, ip_address, user_agent)
+         VALUES ($1, 'reject', $2, $3, 'pending', 'rejected', $4, $5::inet, $6)`,
+        [
+          id, req.user.id, req.user.role, reason,
+          req.ip, req.headers['user-agent'] || null,
+        ]
+      );
+    } catch (histErr) {
+      logger.warn('Leave rejection history record failed', { error: histErr.message });
+    }
+
     await createNotification(
-      result.rows[0].employee_id,
+      leaveRecord.employee_id,
       'Leave rejected',
       'Your leave request has been rejected.',
       { leaveRequestId: id, reason }
@@ -309,10 +374,17 @@ router.put('/request/:id/reject', async (req, res) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       requestId: req.requestId,
-      details: { reason },
+      details: {
+        leaveType: leaveRecord.leave_type,
+        employeeId: leaveRecord.employee_id,
+        startDate: leaveRecord.start_date,
+        endDate: leaveRecord.end_date,
+        rejectionReason: reason,
+        rejectedByRole: req.user.role
+      }
     });
 
-    return res.json(result.rows[0]);
+    return res.json(leaveRecord);
   } catch (error) {
     logger.error('Leave reject error', { error: error.message, userId: req.user?.id });
     return res.status(500).json({ success: false, message: 'Failed to reject leave request' });

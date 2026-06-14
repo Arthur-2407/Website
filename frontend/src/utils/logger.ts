@@ -51,6 +51,18 @@ function buildEntry(level: LogLevel, message: string, meta: LogMeta = {}) {
   };
 }
 
+function apiEndpoint(path: string) {
+  const base = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  if (!base) return normalizedPath;
+  if (base.endsWith('/api') && normalizedPath.startsWith('/api/')) {
+    return `${base}${normalizedPath.slice(4)}`;
+  }
+
+  return `${base}${normalizedPath}`;
+}
+
 function transport(level: LogLevel, message: string, meta: LogMeta = {}) {
   const entry = buildEntry(level, message, meta);
 
@@ -78,8 +90,7 @@ function transport(level: LogLevel, message: string, meta: LogMeta = {}) {
 
   // Real-time error forwarding to backend monitor
   if (level === 'error' || level === 'warn') {
-    const apiHost = import.meta.env.VITE_API_URL || '';
-    fetch(`${apiHost}/api/dev/frontend-error`, {
+    fetch(apiEndpoint('/api/dev/frontend-error'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

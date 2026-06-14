@@ -1,0 +1,4 @@
+{
+  "phase": "Verification & Deployment",
+  "task": "Rebuild and restart docker containers to apply updates"
+}

@@ -2,7 +2,12 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import { logger } from '@utils/logger';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+function normalizeApiBaseUrl(value?: string) {
+  const base = (value || '/api').replace(/\/+$/, '');
+  return base.endsWith('/api') ? base : `${base}/api`;
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 
 // ────────────────────────────────────────────────────────────────
 // RESILIENCE: Serialized token refresh latch — prevents multiple

@@ -1,0 +1,36 @@
+{
+  "frontend": {
+    "framework": "Vite + React + TypeScript",
+    "router": "react-router-dom",
+    "pages": [
+      "LoginPage",
+      "DashboardPage",
+      "AttendancePage",
+      "LeavePage",
+      "ReportsPage",
+      "SupervisorDashboard",
+      "SecurityDashboard",
+      "SystemStatusDashboard",
+      "BootstrapSetupPage"
+    ]
+  },
+  "backend": {
+    "framework": "Express + Node.js",
+    "database": "PostgreSQL",
+    "cache": "Redis",
+    "routes": [
+      "/api/auth",
+      "/api/attendance",
+      "/api/leave",
+      "/api/reports",
+      "/api/work-report",
+      "/api/excel",
+      "/api/geofence",
+      "/api/notifications",
+      "/api/security",
+      "/api/admin",
+      "/api/locations",
+      "/api/auth/mfa"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "report": "Security log validation",
+      "status": "remediated"
+    },
+    {
+      "report": "MFA integration diagnostics",
+      "status": "remediated"
+    }
+  ]
+}
