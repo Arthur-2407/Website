@@ -1,46 +1,124 @@
 {
-  "updatedAt": "2026-05-09T19:58:00+05:30",
-  "packageManagers": [
-    "npm",
-    "pip"
-  ],
-  "nodeWorkspaces": {
-    "root": "npm audit high passed",
-    "backend-api": "npm audit high passed",
-    "frontend": "npm audit high passed"
+  "timestamp": "2026-06-15T13:19:18.461Z",
+  "features": {
+    "Admin Bootstrap Setup": {
+      "apis": [
+        "GET /api/auth/bootstrap/status",
+        "POST /api/auth/bootstrap/setup"
+      ],
+      "services": [
+        "backend-api-prod",
+        "face-ai-service-prod"
+      ],
+      "database": [
+        "employees",
+        "face_embeddings",
+        "security_events",
+        "audit_logs"
+      ],
+      "routes": [
+        "/setup/admin-face"
+      ]
+    },
+    "MFA Face Authentication": {
+      "apis": [
+        "POST /api/auth/pre-login-check",
+        "POST /api/auth/login",
+        "POST /api/auth/face-login"
+      ],
+      "services": [
+        "backend-api-prod",
+        "face-ai-service-prod"
+      ],
+      "database": [
+        "employees",
+        "face_embeddings",
+        "login_logs",
+        "security_events"
+      ],
+      "routes": [
+        "/login",
+        "/face-login"
+      ]
+    },
+    "Employee Attendance Logging": {
+      "apis": [
+        "POST /api/attendance/check-in",
+        "POST /api/attendance/check-out",
+        "GET /api/attendance/today"
+      ],
+      "services": [
+        "backend-api-prod"
+      ],
+      "database": [
+        "attendance_records",
+        "employees"
+      ],
+      "routes": [
+        "/attendance"
+      ]
+    },
+    "Leave Requests Manager": {
+      "apis": [
+        "POST /api/leave/request",
+        "GET /api/leave/pending",
+        "POST /api/leave/approve"
+      ],
+      "services": [
+        "backend-api-prod"
+      ],
+      "database": [
+        "leave_requests",
+        "employees"
+      ],
+      "routes": [
+        "/leave"
+      ]
+    },
+    "Security Logs & Monitoring": {
+      "apis": [
+        "GET /api/security/events",
+        "GET /health",
+        "GET /face-ai/health"
+      ],
+      "services": [
+        "backend-api-prod",
+        "face-ai-service-prod",
+        "attendance-nginx-prod"
+      ],
+      "database": [
+        "security_events",
+        "audit_logs"
+      ],
+      "routes": [
+        "/security",
+        "/system-status"
+      ]
+    },
+    "Face Embedding Approvals": {
+      "apis": [
+        "POST /api/face-change-requests",
+        "GET /api/face-change-requests/pending",
+        "POST /api/face-change-requests/:id/approve"
+      ],
+      "services": [
+        "backend-api-prod",
+        "face-ai-service-prod"
+      ],
+      "database": [
+        "employees",
+        "face_embeddings",
+        "security_events",
+        "audit_logs"
+      ],
+      "routes": [
+        "/admin"
+      ]
+    }
   },
-  "majorRuntimeDependencies": {
-    "backend": [
-      "express",
-      "helmet",
-      "jsonwebtoken",
-      "pg",
-      "redis",
-      "socket.io",
-      "axios"
-    ],
-    "frontend": [
-      "react",
-      "react-router-dom",
-      "axios",
-      "socket.io-client",
-      "zustand",
-      "recharts",
-      "vite"
-    ],
-    "faceAi": [
-      "flask",
-      "flask-socketio",
-      "opencv-python-headless",
-      "mediapipe",
-      "tensorflow-cpu",
-      "deepface",
-      "redis"
-    ]
-  },
-  "changes": [
-    "Backend npm lockfile updated by audit remediation.",
-    "Frontend npm lockfile updated by audit remediation and Vite major upgrade.",
-    "Root npm lockfile updated by audit remediation."
-  ]
+  "systemIntegrity": {
+    "frontendCompiled": true,
+    "backendSyntaxOk": true,
+    "databaseAccessible": true
+  }
 }

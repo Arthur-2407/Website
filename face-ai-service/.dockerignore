@@ -1,3 +1,9 @@
+# Development & Mock Files
+mock-service.py
+test_*.py
+*_test.py
+tests/
+
 .git
 .gitignore
 .env

@@ -1,0 +1,35 @@
+[
+  {
+    "taskId": "logout-consolidation",
+    "timestamp": "2026-06-14T18:50:00Z",
+    "filesChanged": [
+      "frontend/src/router.tsx",
+      "backend-api/src/modules/auth/routes.js"
+    ],
+    "description": "Wrapped MainLayout in ProtectedRoute to enforce user authentication on dashboard and other subpages, enabling automatic redirect on logout. Updated backend /logout route to decode user ID from Authorization access token or body refresh token so that logout events are properly tracked."
+  },
+  {
+    "taskId": "camera-hooks",
+    "timestamp": "2026-06-14T18:55:00Z",
+    "filesChanged": [
+      "frontend/src/hooks/useCamera.ts",
+      "frontend/src/components/camera/FaceCamera.tsx"
+    ],
+    "description": "Rewrote useCamera hook to track active stream acquisition promise and reference count globally. This resolves the StrictMode double-mount lock issue where the camera stream would leak and the active hook instance would remain without a stream. Synchronized FaceCamera's local state with autoCapture updates."
+  },
+  {
+    "taskId": "base64-robustness",
+    "timestamp": "2026-06-14T18:57:00Z",
+    "filesChanged": [
+      "frontend/src/pages/BootstrapSetupPage.tsx",
+      "face-ai-service/src/app.py"
+    ],
+    "description": "Sanitized base64 frames and stripped data URI scheme prefixes in BootstrapSetupPage.tsx before sending payload to bootstrap API. Added sanitize_base64_frame helper function in face-ai-service/src/app.py and sanitized frames in /api/face-login and /api/register-face routes."
+  },
+  {
+    "taskId": "verification-and-build",
+    "timestamp": "2026-06-14T19:00:00Z",
+    "filesChanged": [],
+    "description": "Executed Jest unit tests (102 tests passed across 13 test suites) in backend-api, ran frontend production tsc & vite builds successfully, and verified system-wide build parameters with verify-build.js."
+  }
+]

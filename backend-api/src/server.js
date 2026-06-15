@@ -155,7 +155,42 @@ app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/security', authenticateToken, securityRoutes);
 
 // ADMIN MANAGEMENT ROUTES
+// WEBSITECHK_ADMIN_CONTACT: /api/admin/contact-info is a public endpoint (no auth).
+// Defined inline before the protected adminRoutes to avoid double-mounting.
+const { query: _dbQuery } = require('./config/database');
+app.get('/api/admin/contact-info', async (req, res) => {
+  try {
+    let result = null;
+    try {
+      result = await _dbQuery(
+        `SELECT ac.admin_name as name, ac.admin_email as email,
+                ac.admin_phone as phone, ac.admin_designation as designation
+         FROM admin_configuration ac
+         JOIN employees e ON ac.admin_employee_id = e.id
+         WHERE e.is_active = TRUE
+         ORDER BY ac.updated_at DESC
+         LIMIT 1`
+      );
+    } catch { /* table may not exist yet */ }
+    if (!result || result.rows.length === 0) {
+      result = await _dbQuery(
+        `SELECT CONCAT(first_name, ' ', last_name) as name, email,
+                phone_number as phone, position as designation
+         FROM employees WHERE role = 'admin' AND is_active = TRUE LIMIT 1`
+      );
+    }
+    if (!result || result.rows.length === 0) {
+      return res.json({ name: 'System Administrator', email: null, phone: null, designation: 'System Administrator', mailtoLink: null });
+    }
+    const a = result.rows[0];
+    return res.json({ name: a.name || 'System Administrator', email: a.email || null, phone: a.phone || null, designation: a.designation || 'System Administrator', mailtoLink: a.email ? `mailto:${a.email}` : null });
+  } catch (err) {
+    logger.error('Public contact-info error', { error: err.message });
+    return res.json({ name: 'System Administrator', email: null, phone: null, designation: 'System Administrator', mailtoLink: null });
+  }
+});
 app.use('/api/admin', authenticateToken, adminRoutes);
+
 
 // LOCATION MANAGEMENT ROUTES
 app.use('/api/locations', authenticateToken, locationRoutes);

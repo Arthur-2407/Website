@@ -1,0 +1,12 @@
+CHECKPOINT: CHECKPOINT_FACEAI_THREADING_ALIGN
+DATE: 2026-06-15
+
+SUMMARY:
+Changed the concurrency model of the Flask/SocketIO Face AI microservice from 'eventlet' (with monkey patching) to standard multi-threading ('threading'). Eventlet's monkey patching of standard library threads/sockets is known to cause severe deadlocks when combined with native C++ multi-threaded deep learning libraries (TensorFlow/RetinaFace/PyTorch/OpenCV), causing the service to freeze/hang indefinitely on curl health probes and POST requests.
+
+CHANGES:
+- Removed eventlet import and monkey_patch() in face-ai-service/src/main.py.
+- Configured flask_socketio.SocketIO to use async_mode='threading' in face-ai-service/src/main.py.
+
+ROLLBACK INSTRUCTIONS:
+Restore face-ai-service/src/main.py to its pre-repair state.

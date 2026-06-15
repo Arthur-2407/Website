@@ -146,4 +146,25 @@ export const adminApi = {
   resetEmployeeMfa: async (employeeId: string | number): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
     return api.post(`/admin/employees/${employeeId}/mfa/reset`);
   },
+
+  // Admin configuration & reset
+  getConfiguration: async (): Promise<AxiosResponse<{ success: boolean; data: any }>> => {
+    return api.get('/admin/configuration');
+  },
+
+  updateConfiguration: async (data: any): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+    return api.post('/admin/configuration', data);
+  },
+
+  initiateAdminReset: async (data: { password?: string; frames?: string[] }): Promise<AxiosResponse<{ success: boolean; message: string; recoveryEmailMasked?: string }>> => {
+    return api.post('/admin/reset/initiate', data);
+  },
+
+  verifyAdminResetOtp: async (data: { otp?: string }): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+    return api.post('/admin/reset/verify-otp', data);
+  },
+
+  replaceAdmin: async (data: any): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+    return api.post('/admin/reset/replace', data);
+  },
 };

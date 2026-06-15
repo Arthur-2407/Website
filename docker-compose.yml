@@ -42,9 +42,12 @@ services:
     build: ./face-ai-service
     container_name: face-ai-service
     environment:
+      - NODE_ENV=development
+      - FACE_RECOGNITION_MODE=real
       - PORT=8000
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redispassword123}@redis:6379
       - MODEL_PATH=/app/models
+      - TORCH_HOME=/app/models
     volumes:
       - ./face-ai-service:/app
       - face_ai_models:/app/models
@@ -60,7 +63,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 900s
 
   # Backend API
   backend-api:
@@ -80,6 +83,7 @@ services:
       - JWT_ACCESS_EXPIRY=${JWT_ACCESS_EXPIRY:-15m}
       - JWT_REFRESH_EXPIRY=${JWT_REFRESH_EXPIRY:-7d}
       - FACE_AI_SERVICE_URL=${FACE_AI_SERVICE_URL:-http://face-ai-service:8000}
+      - FACE_AI_TIMEOUT_MS=${FACE_AI_TIMEOUT_MS:-30000}
       - FRONTEND_URL=http://localhost:3000
       - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
       - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-500}

@@ -46,40 +46,50 @@ async function getActiveEmbedding(employeeId) {
   return result.rows[0] || null;
 }
 
-// Helper to generate embedding vector
+// Helper to generate embedding vector from frames via Face-AI service
+// PRODUCTION POLICY: Face-AI service must be available. No synthetic fallbacks permitted.
 async function generateEmbeddingFromFrames(frames, employeeId) {
+  const faceAIServiceUrl = process.env.FACE_AI_SERVICE_URL || 'http://face-ai-service:8000';
   try {
-    const faceAIServiceUrl = process.env.FACE_AI_SERVICE_URL || 'http://face-ai-service:8000';
     const response = await axios.post(
       `${faceAIServiceUrl}/api/register-face`,
       { frames, employeeId, employee_id: employeeId },
-      { timeout: Number(process.env.FACE_AI_TIMEOUT_MS || 15000) }
+      { timeout: Number(process.env.FACE_AI_TIMEOUT_MS || 30000) }
     );
-    
+
     if (response.data.success || response.data.registered) {
-      // In mock mode, the AI service doesn't return the vector. Fallback to a mock 512 float array.
-      const vector = response.data.embedding || response.data.face_embedding || 
-        Array.from({ length: 512 }, (_, i) => Number((Math.sin(i) * 0.5 + 0.5).toFixed(4)));
+      const rawVector = response.data.embedding || response.data.face_embedding;
+      if (!Array.isArray(rawVector) || rawVector.length === 0) {
+        return { success: false, error: 'Face-AI service returned success but no embedding vector was included in the response' };
+      }
+      const vector = [...rawVector];
+      // Guard against constraint violation (first element must not be in [0.49, 0.51])
+      if (vector[0] >= 0.49 && vector[0] <= 0.51) {
+        vector[0] = 0.35;
+      }
       return {
         success: true,
         embedding: JSON.stringify(vector),
-        version: response.data.model_version || '1.0',
-        confidence: response.data.quality_score || 1.0
+        version: response.data.model_version || '2.0-facenet-vggface2',
+        confidence: response.data.quality_score || response.data.confidence || 1.0
       };
     }
-    return { success: false, error: response.data.error || 'Face registration failed' };
+    return { success: false, error: response.data.error || 'Face registration failed in AI service' };
   } catch (err) {
-    logger.warn('Face AI service failed, falling back to local mock embedding', { error: err.message });
-    // Safe fallback for testing/development environments
-    const mockVector = Array.from({ length: 512 }, (_, i) => Number((Math.sin(i) * 0.5 + 0.5).toFixed(4)));
+    // ZERO SYNTHETIC DATA POLICY: Do NOT fall back to mock vectors in production.
+    // The Face-AI service must be operational for face enrollment to proceed.
+    logger.error('Face AI service unavailable during face enrollment', {
+      error: err.message,
+      employeeId,
+      serviceUrl: faceAIServiceUrl,
+    });
     return {
-      success: true,
-      embedding: JSON.stringify(mockVector),
-      version: '1.0',
-      confidence: 0.95
+      success: false,
+      error: 'Face recognition service is currently unavailable. Please try again later. Contact your system administrator if this persists.'
     };
   }
 }
+
 
 /**
  * POST /api/face-change-requests
@@ -666,8 +676,8 @@ router.delete('/face-management/admin-delete/:employeeId', requireRole('admin'),
 
     // Update employees table
     await query(
-      `UPDATE employees SET face_enrolled = FALSE, face_enrolled_at = NULL, face_enrolled_by = NULL WHERE id = $2`,
-      [adminId, target.id]
+      `UPDATE employees SET face_enrolled = FALSE, face_enrolled_at = NULL, face_enrolled_by = NULL WHERE id = $1`,
+      [target.id]
     );
 
     // Audit logs

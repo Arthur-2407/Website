@@ -1,0 +1,67 @@
+{
+  "sessionId": "2026-06-14-runtime-validation",
+  "timestamp": "2026-06-14T16:22:03.053Z",
+  "overallStatus": "COMPLETE",
+  "environment": {
+    "nodeVersion": "v20.20.1",
+    "npmVersion": "10.8.2",
+    "dockerVersion": "29.2.1",
+    "dockerComposeVersion": "v5.1.0",
+    "postgresVersion": "15-alpine",
+    "redisVersion": "7-alpine",
+    "faceAiVersion": "1.0.0 (Python Flask)"
+  },
+  "containers": {
+    "attendance-db": "healthy",
+    "attendance-redis": "healthy",
+    "face-ai-service": "healthy",
+    "backend-api": "healthy",
+    "attendance-frontend": "healthy",
+    "attendance-nginx": "healthy"
+  },
+  "objectivesStatus": {
+    "A_bootstrap": "COMPLETE",
+    "B_normalLogin": "COMPLETE",
+    "C_imageUpload": "COMPLETE",
+    "D_loginFailure": "COMPLETE",
+    "E_faceRecognition": "COMPLETE",
+    "F_degradedMode": "COMPLETE",
+    "G_linkingValidation": "COMPLETE",
+    "H_refactoring": "COMPLETE"
+  },
+  "testsRun": {
+    "bootstrapStatusCheck": "PASS",
+    "bootstrapLockAfterSetup": "PASS",
+    "bootstrapLockAfterRestart": "PASS",
+    "adminFaceLogin": "PASS",
+    "employeePasswordLogin": "PASS",
+    "employeeFaceLogin": "PASS",
+    "tokenRefresh": "PASS",
+    "tokenRevocation": "PASS",
+    "faceEnrollment": "PASS",
+    "enrollmentPersistence": "PASS",
+    "nginxHealthProxy": "PASS",
+    "nginxApiProxy": "PASS",
+    "failureScenarios": "PASS",
+    "postRestartValidation": "PASS"
+  },
+  "fixesApplied": [
+    "bootstrap_embedding_constraint_fix",
+    "nginx_keepalive_proxy_headers",
+    "camera_hook_stabilization",
+    "logout_consolidation",
+    "base64_sanitization"
+  ],
+  "reportsGenerated": [
+    "RUNTIME_VALIDATION_REPORT.md",
+    "ROOT_CAUSE_REPORT.md",
+    "FIXES_APPLIED_REPORT.md",
+    "API_VALIDATION_REPORT.md",
+    "AUTHENTICATION_VALIDATION_REPORT.md",
+    "FACE_RECOGNITION_REPORT.md",
+    "BOOTSTRAP_VALIDATION_REPORT.md",
+    "DATABASE_VALIDATION_REPORT.md",
+    "CHECKPOINT_VALIDATION_REPORT.md",
+    "RESUME_VALIDATION_REPORT.md"
+  ]
+}

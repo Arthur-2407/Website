@@ -68,6 +68,7 @@ services:
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=7d
       - FACE_AI_SERVICE_URL=http://face-ai-service:8000
+      - FACE_AI_TIMEOUT_MS=${FACE_AI_TIMEOUT_MS:-30000}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
       - RUN_MIGRATIONS=true
     volumes:
@@ -78,6 +79,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      face-ai-service:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -94,9 +97,12 @@ services:
       dockerfile: Dockerfile.prod
     container_name: face-ai-service-prod
     environment:
+      - NODE_ENV=production
+      - FACE_RECOGNITION_MODE=real
       - PORT=8000
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redispassword123}@redis:6379
       - MODEL_PATH=/app/models
+      - TORCH_HOME=/app/models
     volumes:
       - face_ai_models:/app/models
       - face_ai_logs:/app/logs
@@ -111,7 +117,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 900s
 
   # Frontend
   frontend:

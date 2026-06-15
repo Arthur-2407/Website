@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import api from '@services/api';
 import { logger } from '@utils/logger';
 
 interface HealthResponse {
@@ -37,16 +36,15 @@ export function DegradedModeBanner() {
   const checkHealth = async () => {
     // Cancel any in-flight health check before starting a new one
     abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
 
     try {
-      // Use the Axios api instance so the Vite dev proxy handles routing,
-      // avoiding direct cross-origin fetch to the backend URL.
-      const res = await api.get<HealthResponse>('/health', {
-        signal: controller.signal,
-      });
-      const data = res.data;
+      // HEALTH-FIX: Use native fetch so request goes to /health (Nginx proxy → backend:3001/health).
+      // The shared `api` Axios instance prepends /api, causing /api/health → 404.
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const rawRes = await fetch('/health', { signal: controller.signal });
+      if (!rawRes.ok) throw new Error(`Health endpoint returned ${rawRes.status}`);
+      const data: HealthResponse = await rawRes.json();
 
       if (data.status !== 'healthy') {
         // V3: Use degradedMode field if available for richer service info

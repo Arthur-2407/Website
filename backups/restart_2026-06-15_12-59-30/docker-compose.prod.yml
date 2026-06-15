@@ -1,0 +1,185 @@
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: attendance-db-prod
+    environment:
+      POSTGRES_DB: attendance_system
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-securepassword123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - attendance-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: attendance-redis-prod
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword123} --appendonly yes
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispassword123}
+    volumes:
+      - redis_data:/data
+    networks:
+      - attendance-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-redispassword123}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # Backend API
+  backend-api:
+    build:
+      context: ./backend-api
+      dockerfile: Dockerfile.prod
+    container_name: backend-api-prod
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-attendance_system}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-securepassword123}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redispassword123}@redis:6379
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-super-secret-jwt-access-key}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-super-secret-jwt-refresh-key}
+      - JWT_ACCESS_EXPIRY=15m
+      - JWT_REFRESH_EXPIRY=7d
+      - FACE_AI_SERVICE_URL=http://face-ai-service:8000
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+      - RUN_MIGRATIONS=true
+    volumes:
+      - backend_api_logs:/app/logs
+    networks:
+      - attendance-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      face-ai-service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Face AI Service
+  face-ai-service:
+    build:
+      context: ./face-ai-service
+      dockerfile: Dockerfile.prod
+    container_name: face-ai-service-prod
+    environment:
+      - NODE_ENV=production
+      - FACE_RECOGNITION_MODE=real
+      - PORT=8000
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redispassword123}@redis:6379
+      - MODEL_PATH=/app/models
+    volumes:
+      - face_ai_models:/app/models
+      - face_ai_logs:/app/logs
+    networks:
+      - attendance-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: attendance-frontend-prod
+    environment:
+      - VITE_API_URL=${API_URL:-http://localhost:3001}
+      - VITE_FACE_AI_URL=${FACE_AI_URL:-http://localhost:8000}
+    networks:
+      - attendance-network
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Reverse Proxy
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.prod
+    container_name: attendance-nginx-prod
+    volumes:
+      - nginx_logs:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - attendance-network
+    depends_on:
+      - frontend
+      - backend-api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  attendance-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  face_ai_models:
+    driver: local
+  face_ai_logs:
+    driver: local
+  backend_api_logs:
+    driver: local
+  nginx_logs:
+    driver: local

@@ -18,6 +18,8 @@ import {
   FaCamera,
   FaTrash,
   FaSync,
+  FaExclamationTriangle,
+  FaCheckCircle,
 } from 'react-icons/fa';
 import { adminApi, Employee, Supervisor, WorkTiming } from '@api/adminApi';
 import { faceManagementApi, FaceChangeRequest, FaceAuditLog } from '@api/faceManagementApi';
@@ -27,7 +29,7 @@ import { useAuth } from '@contexts/AuthContext';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Tab = 'hierarchy' | 'employees' | 'supervisors' | 'timings' | 'mfa' | 'approvals';
+type Tab = 'hierarchy' | 'employees' | 'supervisors' | 'timings' | 'mfa' | 'approvals' | 'system';
 
 interface CreateEmployeeForm {
   employeeId: string;
@@ -77,6 +79,629 @@ const RoleBadge: React.FC<{ role: string }> = ({ role }) => {
 const StatusDot: React.FC<{ active: boolean }> = ({ active }) => (
   <span className={`inline-block w-2 h-2 rounded-full mr-2 ${active ? 'bg-green-500' : 'bg-gray-400'}`} />
 );
+
+// ─── System Settings Tab Sub-component ───────────────────────────────────────────
+
+const SystemSettingsTab: React.FC = () => {
+  const { showSuccess, showError } = useNotification();
+  const [activeConfigTab, setActiveConfigTab] = useState<'general' | 'reset'>('general');
+
+  // General Config Form States
+  const [adminName, setAdminName] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPhone, setAdminPhone] = useState('');
+  const [adminAddress, setAdminAddress] = useState('');
+  const [adminDesignation, setAdminDesignation] = useState('');
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryPhone, setRecoveryPhone] = useState('');
+  const [adminEmployeeId, setAdminEmployeeId] = useState('');
+  const [isFetching, setIsFetching] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Reset Wizard States
+  const [resetStep, setResetStep] = useState<1 | 2 | 3>(1);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [verifyFrames, setVerifyFrames] = useState<string[]>([]);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [maskedEmail, setMaskedEmail] = useState('');
+
+  // Step 2 OTP States
+  const [otpCode, setOtpCode] = useState('');
+  const [isOtpVerifying, setIsOtpVerifying] = useState(false);
+
+  // Step 3 Replacement States
+  const [newName, setNewName] = useState('');
+  const [newEmpId, setNewEmpId] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+  const [newDesignation, setNewDesignation] = useState('');
+  const [newRecoveryEmail, setNewRecoveryEmail] = useState('');
+  const [newRecoveryPhone, setNewRecoveryPhone] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
+  const [newFaceFrames, setNewFaceFrames] = useState<string[]>([]);
+  const [isReplacing, setIsReplacing] = useState(false);
+
+  // Fetch current config on load
+  const loadConfig = async () => {
+    setIsFetching(true);
+    try {
+      const res = await adminApi.getConfiguration();
+      if (res.data.success && res.data.data) {
+        const config = res.data.data;
+        setAdminName(config.adminName || '');
+        setAdminEmail(config.adminEmail || '');
+        setAdminPhone(config.adminPhone || '');
+        setAdminAddress(config.adminAddress || '');
+        setAdminDesignation(config.adminDesignation || '');
+        setRecoveryEmail(config.recoveryEmail || '');
+        setRecoveryPhone(config.recoveryPhone || '');
+        setAdminEmployeeId(config.adminEmployeeId || '');
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Failed to load system configuration.');
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConfig();
+  }, []);
+
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      const res = await adminApi.updateConfiguration({
+        adminName,
+        adminEmail,
+        adminPhone,
+        adminAddress,
+        adminDesignation,
+        recoveryEmail,
+        recoveryPhone
+      });
+      if (res.data.success) {
+        showSuccess(res.data.message || 'Configuration updated successfully.');
+        loadConfig();
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Failed to save configuration.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCaptureVerifyFrame = (frame: string) => {
+    const base64Data = frame.replace('data:image/jpeg;base64,', '');
+    setVerifyFrames(prev => [...prev.slice(-19), base64Data]);
+  };
+
+  const handleCaptureNewFaceFrame = (frame: string) => {
+    const base64Data = frame.replace('data:image/jpeg;base64,', '');
+    setNewFaceFrames(prev => [...prev.slice(-19), base64Data]);
+  };
+
+  // Step 1: Password & Face verification
+  const handleInitiateReset = async () => {
+    if (!currentPassword) {
+      showError('Please enter your current password.');
+      return;
+    }
+    if (verifyFrames.length < 5) {
+      showError('Please look at the camera to capture face frames.');
+      return;
+    }
+
+    setIsVerifying(true);
+    try {
+      const res = await adminApi.initiateAdminReset({
+        password: currentPassword,
+        frames: verifyFrames
+      });
+      if (res.data.success) {
+        setMaskedEmail(res.data.recoveryEmailMasked || 'configured recovery email');
+        showSuccess('Verification successful. OTP has been sent.');
+        setResetStep(2);
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Verification failed. Check password and face.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Step 2: OTP verification
+  const handleVerifyOtp = async () => {
+    if (!otpCode || otpCode.length < 6) {
+      showError('Please enter a valid 6-digit OTP code.');
+      return;
+    }
+
+    setIsOtpVerifying(true);
+    try {
+      const res = await adminApi.verifyAdminResetOtp({ otp: otpCode });
+      if (res.data.success) {
+        showSuccess('OTP verified successfully. You may now update credentials.');
+        setResetStep(3);
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Invalid or expired OTP.');
+    } finally {
+      setIsOtpVerifying(false);
+    }
+  };
+
+  // Step 3: Replace Admin Details
+  const handleReplaceAdmin = async () => {
+    if (!newName || !newEmpId || !newEmail || !newPassword) {
+      showError('Name, Employee ID, Email, and Password are required.');
+      return;
+    }
+    if (newPassword !== newPasswordConfirm) {
+      showError('Passwords do not match.');
+      return;
+    }
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      showError('Password must be at least 8 characters and contain at least one uppercase letter, one lowercase letter, and one number.');
+      return;
+    }
+    if (newFaceFrames.length < 10) {
+      showError('Please capture at least 10 face frames of the new administrator.');
+      return;
+    }
+
+    setIsReplacing(true);
+    try {
+      const res = await adminApi.replaceAdmin({
+        adminName: newName,
+        adminEmployeeId: newEmpId,
+        adminEmail: newEmail,
+        adminPhone: newPhone,
+        adminAddress: newAddress,
+        adminDesignation: newDesignation,
+        recoveryEmail: newRecoveryEmail,
+        recoveryPhone: newRecoveryPhone,
+        password: newPassword,
+        frames: newFaceFrames
+      });
+      if (res.data.success) {
+        showSuccess('Administrator replaced successfully. Logging out...');
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 3000);
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Failed to replace administrator.');
+    } finally {
+      setIsReplacing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveConfigTab('general')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeConfigTab === 'general' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          General Settings
+        </button>
+        <button
+          onClick={() => setActiveConfigTab('reset')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeConfigTab === 'reset' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Admin Reset Wizard
+        </button>
+      </div>
+
+      {isFetching ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="h-8 w-8 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin mx-auto" />
+        </div>
+      ) : activeConfigTab === 'general' ? (
+        <form onSubmit={handleSaveConfig} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Administrator Profile Settings</h3>
+            <p className="text-sm text-gray-500">Configure global administrator contact details and recovery paths.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Admin Employee ID (Read-only)</label>
+              <input
+                type="text"
+                value={adminEmployeeId}
+                disabled
+                className="w-full bg-gray-50 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 cursor-not-allowed"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Full Name</label>
+              <input
+                type="text"
+                value={adminName}
+                onChange={e => setAdminName(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g. John Doe"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Primary Email</label>
+              <input
+                type="email"
+                value={adminEmail}
+                onChange={e => setAdminEmail(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="admin@company.com"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Phone Number</label>
+              <input
+                type="tel"
+                value={adminPhone}
+                onChange={e => setAdminPhone(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="+1 (555) 0100"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Designation</label>
+              <input
+                type="text"
+                value={adminDesignation}
+                onChange={e => setAdminDesignation(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="System Administrator"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Office Address</label>
+              <input
+                type="text"
+                value={adminAddress}
+                onChange={e => setAdminAddress(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Office HQ"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Recovery Email</label>
+              <input
+                type="email"
+                value={recoveryEmail}
+                onChange={e => setRecoveryEmail(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="recovery@company.com"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Recovery Phone</label>
+              <input
+                type="tel"
+                value={recoveryPhone}
+                onChange={e => setRecoveryPhone(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="+1 (555) 0199"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-4 border-t border-gray-100">
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm disabled:opacity-50 flex items-center gap-2 shadow-sm"
+            >
+              {isSaving ? (
+                <>
+                  <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Settings'
+              )}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+          <div className="border-b border-gray-100 pb-4">
+            <h3 className="text-lg font-bold text-red-600 flex items-center gap-2">
+              <FaShieldAlt className="text-red-500" />
+              Administrator Reset & Identity Replacement Wizard
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Follow this secure multi-step verification to fully replace the administrator credentials, identity, password, and registered face.
+            </p>
+          </div>
+
+          {/* Steps Indicator */}
+          <div className="flex items-center justify-between max-w-lg mx-auto mb-8">
+            <div className="flex flex-col items-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                resetStep >= 1 ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-400'
+              }`}>1</div>
+              <span className="text-xs mt-1 text-gray-600 font-medium">Verify Identity</span>
+            </div>
+            <div className={`flex-1 h-0.5 mx-2 ${resetStep >= 2 ? 'bg-red-600' : 'bg-gray-200'}`} />
+            <div className="flex flex-col items-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                resetStep >= 2 ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-400'
+              }`}>2</div>
+              <span className="text-xs mt-1 text-gray-600 font-medium">Recovery OTP</span>
+            </div>
+            <div className={`flex-1 h-0.5 mx-2 ${resetStep >= 3 ? 'bg-red-600' : 'bg-gray-200'}`} />
+            <div className="flex flex-col items-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                resetStep >= 3 ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-400'
+              }`}>3</div>
+              <span className="text-xs mt-1 text-gray-600 font-medium">Replace Admin</span>
+            </div>
+          </div>
+
+          <div className="max-w-xl mx-auto">
+            {resetStep === 1 && (
+              <div className="space-y-6">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex gap-3 text-amber-800 text-sm">
+                  <FaExclamationTriangle className="mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="font-semibold">Security Warning:</span> Starting the reset wizard requires verifying your current administrator password and biometrics. An OTP will then be dispatched to your recovery email.
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">Current Admin Password</label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={e => setCurrentPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                      placeholder="Enter current password"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-2">Liveness Face Capture</label>
+                    <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden relative max-h-56 mx-auto">
+                      <FaceCamera
+                        onCapture={handleCaptureVerifyFrame}
+                        className="w-full h-full"
+                        autoCapture={true}
+                        captureInterval={200}
+                        showControls={false}
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 mt-2">
+                      <span>Verification frames buffer:</span>
+                      <span className="font-semibold text-blue-600">{verifyFrames.length}/20</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-4">
+                  <button
+                    onClick={handleInitiateReset}
+                    disabled={isVerifying || !currentPassword || verifyFrames.length < 5}
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isVerifying ? (
+                      <>
+                        <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        Verifying...
+                      </>
+                    ) : (
+                      'Verify & Send OTP'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {resetStep === 2 && (
+              <div className="space-y-6">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3 text-blue-800 text-sm">
+                  <FaCheckCircle className="mt-0.5 flex-shrink-0" />
+                  <div>
+                    An OTP was sent to your recovery email: <span className="font-bold">{maskedEmail}</span>. The code will expire in 5 minutes.
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-1">One-Time Password (OTP)</label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={e => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest text-center text-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="123456"
+                  />
+                </div>
+
+                <div className="flex justify-between pt-4">
+                  <button
+                    onClick={() => setResetStep(1)}
+                    className="px-4 py-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-lg"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleVerifyOtp}
+                    disabled={isOtpVerifying || otpCode.length < 6}
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isOtpVerifying ? (
+                      <>
+                        <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        Verifying OTP...
+                      </>
+                    ) : (
+                      'Verify OTP'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {resetStep === 3 && (
+              <div className="space-y-6">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800 text-sm">
+                  <span className="font-semibold">Final Step:</span> Input the credentials and details for the new Master System Administrator and register their face.
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Admin Full Name *</label>
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={e => setNewName(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="e.g. John Smith"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Admin Employee ID *</label>
+                    <input
+                      type="text"
+                      value={newEmpId}
+                      onChange={e => setNewEmpId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="e.g. admin"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Admin Email *</label>
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={e => setNewEmail(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="admin@company.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Admin Phone</label>
+                    <input
+                      type="tel"
+                      value={newPhone}
+                      onChange={e => setNewPhone(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="+1 555 0100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Recovery Email</label>
+                    <input
+                      type="email"
+                      value={newRecoveryEmail}
+                      onChange={e => setNewRecoveryEmail(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="recovery@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Recovery Phone</label>
+                    <input
+                      type="tel"
+                      value={newRecoveryPhone}
+                      onChange={e => setNewRecoveryPhone(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="+1 555 0199"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Designation</label>
+                    <input
+                      type="text"
+                      value={newDesignation}
+                      onChange={e => setNewDesignation(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="System Administrator"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Office Address</label>
+                    <input
+                      type="text"
+                      value={newAddress}
+                      onChange={e => setNewAddress(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="Office HQ"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">New Admin Password *</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="At least 8 chars, 1 uppercase, 1 lowercase, 1 number"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Confirm New Password *</label>
+                    <input
+                      type="password"
+                      value={newPasswordConfirm}
+                      onChange={e => setNewPasswordConfirm(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600 mb-2">New Admin Face Registration *</label>
+                  <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden relative max-h-56 mx-auto">
+                    <FaceCamera
+                      onCapture={handleCaptureNewFaceFrame}
+                      className="w-full h-full"
+                      autoCapture={true}
+                      captureInterval={150}
+                      showControls={false}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-500 mt-2">
+                    <span>Captured frames (minimum 10):</span>
+                    <span className="font-semibold text-blue-600">{newFaceFrames.length}/20</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4">
+                  <button
+                    onClick={handleReplaceAdmin}
+                    disabled={isReplacing || newFaceFrames.length < 10 || !newPassword || newPassword !== newPasswordConfirm}
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm rounded-lg shadow-md disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isReplacing ? (
+                      <>
+                        <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        Replacing Administrator...
+                      </>
+                    ) : (
+                      'Confirm Replacement'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -330,6 +955,7 @@ const AdminPage: React.FC = () => {
     { id: 'timings', label: 'Work Timings', icon: <FaClock /> },
     { id: 'mfa', label: 'MFA Status', icon: <FaLock /> },
     { id: 'approvals', label: 'Face Approvals', icon: <FaCheck /> },
+    { id: 'system', label: 'System Settings', icon: <FaSync /> },
   ];
 
   return (
@@ -1071,6 +1697,11 @@ const AdminPage: React.FC = () => {
                   )}
                 </div>
               </div>
+            )}
+
+            {/* ── SYSTEM SETTINGS TAB ── */}
+            {activeTab === 'system' && (
+              <SystemSettingsTab />
             )}
           </>
         )}

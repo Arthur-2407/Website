@@ -15,6 +15,7 @@ const SystemStatusDashboard = lazy(() => import('@pages/SystemStatusDashboard'))
 const AdminPage = lazy(() => import('@pages/AdminPage'));
 const FaceLogin = lazy(() => import('@components/FaceLogin'));
 const BootstrapSetupPage = lazy(() => import('@pages/BootstrapSetupPage'));
+const RecoveryRequestPage = lazy(() => import('@pages/RecoveryRequestPage'));
 
 const routeFallback = (
   <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans">
@@ -40,8 +41,29 @@ export const router = createBrowserRouter([
     element: withSuspense(<BootstrapSetupPage />),
   },
   {
+    path: '/bootstrap',
+    element: withSuspense(<BootstrapSetupPage />),
+  },
+  {
+    path: '/admin-setup',
+    element: withSuspense(<BootstrapSetupPage />),
+  },
+  {
+    path: '/system-bootstrap',
+    element: withSuspense(<BootstrapSetupPage />),
+  },
+  {
+    path: '/recover-admin',
+    element: withSuspense(<BootstrapSetupPage />),
+  },
+  {
+    // Public — users with missing credentials can't authenticate to reach a protected route
+    path: '/recovery-request',
+    element: withSuspense(<RecoveryRequestPage />),
+  },
+  {
     path: '/',
-    element: <MainLayout />,
+    element: <ProtectedRoute element={<MainLayout />} />,
     children: [
       {
         index: true,

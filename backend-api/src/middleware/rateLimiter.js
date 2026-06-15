@@ -37,8 +37,12 @@ function createLimiter({ windowMs = 60_000, max = 100, name = 'default', keyGene
       retryAfter: Math.ceil(windowMs / 1000),
     },
     keyGenerator: keyGenerator || ((req) => {
-      // Use user ID if authenticated, otherwise IP
-      return req.user?.id ? `user:${req.user.id}` : req.ip;
+      // Use user ID if authenticated, otherwise combine IP and employeeId from body/query to support NATs
+      if (req.user?.id) {
+        return `user:${req.user.id}`;
+      }
+      const employeeId = req.body?.employeeId || req.body?.employee_id || req.query?.employeeId || '';
+      return employeeId ? `${req.ip}:${employeeId}` : req.ip;
     }),
     handler: (req, res, next, options) => {
       logger.warn('[RateLimiter] Rate limit exceeded', {

@@ -1,3 +1,18 @@
+/**
+ * DEPENDENCY VERIFICATION:
+ * - Inbound dependencies: server.js
+ * - Outbound dependencies: ../../config/database.js, ../../config/logger.js, ../security-monitoring/securityLogger.js
+ * - Runtime dependencies: PostgreSQL connection pool
+ *
+ * IMPORT VERIFICATION:
+ * - require('../../config/database') is valid and exports query
+ * - require('../../config/logger') is valid and exports logger
+ * - require('../security-monitoring/securityLogger') is valid and exports logAuditEvent
+ *
+ * REFERENCE VERIFICATION:
+ * - Exports: router
+ */
+
 const express = require('express');
 const router = express.Router();
 const { query } = require('../../config/database');
@@ -56,17 +71,33 @@ router.post('/request', async (req, res) => {
       'SELECT supervisor_id FROM employees WHERE id = $1',
       [req.user.id]
     );
-    const supervisorId = employeeResult.rows[0]?.supervisor_id || null;
+    let supervisorId = employeeResult.rows[0]?.supervisor_id || null;
+
+    // Supervisor Leave: Supervisor -> Admin (fallback if supervisor_id is null)
+    if (!supervisorId && req.user.role === 'supervisor') {
+      const adminResult = await query(
+        "SELECT id FROM employees WHERE role = 'admin' AND is_active = TRUE LIMIT 1"
+      );
+      if (adminResult.rows.length > 0) {
+        supervisorId = adminResult.rows[0].id;
+      }
+    }
+
+    const isAdmin = req.user.role === 'admin';
+    const initialStatus = isAdmin ? 'approved' : 'pending';
+    const approverId = isAdmin ? req.user.id : null;
+    const approvalTimestampSql = isAdmin ? 'NOW()' : 'NULL';
 
     const result = await query(
       `INSERT INTO leave_requests
-       (employee_id, supervisor_id, leave_type, start_date, end_date, total_days, reason)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (employee_id, supervisor_id, leave_type, start_date, end_date, total_days, reason, status, approver_id, approval_timestamp, approved_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, ${approvalTimestampSql}, ${approvalTimestampSql})
        RETURNING *`,
-      [req.user.id, supervisorId, leaveType, startDate, endDate, days, reason]
+      [req.user.id, supervisorId, leaveType, startDate, endDate, days, reason, initialStatus, approverId]
     );
 
-    if (supervisorId) {
+    // If it's a supervisor requesting, notify their supervisor (Admin)
+    if (supervisorId && !isAdmin) {
       await createNotification(
         supervisorId,
         'New leave request',
@@ -92,10 +123,16 @@ router.post('/request', async (req, res) => {
         `INSERT INTO leave_approval_history
            (leave_request_id, action, actor_employee_id, actor_role,
             previous_status, new_status, reason, ip_address, user_agent)
-         VALUES ($1, 'submit', $2, $3, NULL, 'pending', $4, $5::inet, $6)`,
+         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7::inet, $8)`,
         [
-          result.rows[0].id, req.user.id, req.user.role,
-          reason, req.ip, req.headers['user-agent'] || null,
+          result.rows[0].id,
+          isAdmin ? 'approve' : 'submit',
+          req.user.id,
+          req.user.role,
+          initialStatus,
+          reason || (isAdmin ? 'Self-authorized admin leave' : ''),
+          req.ip,
+          req.headers['user-agent'] || null,
         ]
       );
     } catch (histErr) {
@@ -140,8 +177,7 @@ router.get('/team-requests', async (req, res) => {
 
     if (req.user.role === 'supervisor') {
       params.push(req.user.id);
-      scope = `AND (lr.supervisor_id = $2 OR e.department = $3)`;
-      params.push(req.user.department);
+      scope = `AND lr.supervisor_id = $2`;
     }
 
     const result = await query(
@@ -213,6 +249,22 @@ router.put('/request/:id/cancel', async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Pending leave request not found' });
+    }
+
+    // Log cancellation in leave_approval_history
+    try {
+      await query(
+        `INSERT INTO leave_approval_history
+           (leave_request_id, action, actor_employee_id, actor_role,
+            previous_status, new_status, reason, ip_address, user_agent)
+         VALUES ($1, 'cancel', $2, $3, 'pending', 'cancelled', 'Cancelled by employee', $4::inet, $5)`,
+        [
+          id, req.user.id, req.user.role,
+          req.ip, req.headers['user-agent'] || null,
+        ]
+      );
+    } catch (histErr) {
+      logger.warn('Leave cancellation history record failed', { error: histErr.message });
     }
 
     await logAuditEvent({

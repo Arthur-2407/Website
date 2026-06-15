@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-06-15T11:51:15Z",
+  "pipelineName": "Enterprise Face AI Enrollment & Verification Pipeline",
+  "version": "11.0",
+  "components": {
+    "frontend": {
+      "duties": "Capture video frames, control auto-capture state, encode frames as base64, submit authentication and enrollment requests.",
+      "components": {
+        "FaceCamera": "frontend/src/components/camera/FaceCamera.tsx",
+        "useCamera": "frontend/src/hooks/useCamera.ts"
+      },
+      "apiClient": {
+        "authApi": "frontend/src/api/authApi.ts",
+        "faceManagementApi": "frontend/src/api/faceManagementApi.ts"
+      }
+    },
+    "nginx": {
+      "duties": "Expose TLS gateway, proxy API requests to backend-api, proxy direct ML requests to face-ai-service, enforce body limits and keepalives.",
+      "config": "nginx/nginx.conf"
+    },
+    "backendApi": {
+      "duties": "Enforce RBAC middleware, validate inputs, verify passwords for combined authentication, query PostgreSQL for active embeddings, forward requests to Flask service.",
+      "server": "backend-api/src/server.js",
+      "modules": {
+        "auth": "backend-api/src/modules/auth/routes.js",
+        "faceManagement": "backend-api/src/modules/face-management/routes.js"
+      }
+    },
+    "faceAiService": {
+      "duties": "Receive base64 frames, run MTCNN face detection, analyze physical liveness/spoofing, compute 512-dimensional face embeddings, compare vectors using cosine similarity.",
+      "server": "face-ai-service/src/main.py",
+      "modules": {
+        "detector": "face-ai-service/src/face_detection/detector.py",
+        "liveness": "face-ai-service/src/liveness_detection/liveness_detector.py",
+        "antiSpoof": "face-ai-service/src/anti_spoof_detection/spoof_detector.py"
+      }
+    },
+    "database": {
+      "duties": "Store employee configuration, persist active/inactive face embeddings, record audit logs and access attempt logs.",
+      "tables": [
+        "employees",
+        "face_embeddings",
+        "face_audit_logs",
+        "login_logs"
+      ]
+    }
+  }
+}

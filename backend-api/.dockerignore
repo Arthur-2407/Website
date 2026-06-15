@@ -1,0 +1,43 @@
+# Development and Test Files
+dev-server.js
+mock-routes.js
+test_output.log
+test-*.js
+__tests__/
+*.test.js
+*.spec.js
+
+# Node modules
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Environment and Config
+.env
+.env.local
+.env.*.local
+config.env
+
+# Build artifacts
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Dependencies
+yarn.lock
+
+# OS
+.DS_Store
+Thumbs.db

@@ -9,7 +9,7 @@ const router = express.Router();
 // Check-in endpoint
 router.post('/check-in', async (req, res) => {
   try {
-    const { location, imageData } = req.body;
+    const { location, imageData, idempotencyKey } = req.body;
     const employeeId = req.user.id;
 
     if (
@@ -38,25 +38,15 @@ router.post('/check-in', async (req, res) => {
 
     const { within_fence, distance, office_name } = geoFenceResult.rows[0];
 
-    // Check if already checked in today (timezone-safe using PostgreSQL CURRENT_DATE)
-    const existingCheckin = await query(
-      `SELECT id FROM attendance_records 
-       WHERE employee_id = $1 AND check_in_time >= CURRENT_DATE AND check_in_time < CURRENT_DATE + INTERVAL '1 day'`,
-      [employeeId]
-    );
-
-    if (existingCheckin.rows.length > 0) {
-      return res.status(400).json({
-        error: 'Already checked in today',
-        code: 'ALREADY_CHECKED_IN'
-      });
-    }
-
-    // Record attendance
+    // Atomic INSERT ... ON CONFLICT DO NOTHING using the unique partial index
+    // (uix_attendance_one_open_per_employee_per_day).
+    // This prevents double-check-in even with concurrent requests — the DB
+    // enforces uniqueness atomically, so the SELECT+INSERT race condition is eliminated.
     const result = await query(
-      `INSERT INTO attendance_records 
-       (employee_id, check_in_time, location, geo_fence_status, distance_from_office, check_in_image_url)
-       VALUES ($1, NOW(), POINT($2, $3), $4, $5, $6)
+      `INSERT INTO attendance_records
+         (employee_id, check_in_time, location, geo_fence_status, distance_from_office, check_in_image_url, idempotency_key)
+       VALUES ($1, NOW(), POINT($2, $3), $4, $5, $6, $7)
+       ON CONFLICT DO NOTHING
        RETURNING id, check_in_time`,
       [
         employeeId,
@@ -64,9 +54,18 @@ router.post('/check-in', async (req, res) => {
         location.longitude,
         within_fence,
         distance,
-        imageData || null
+        imageData || null,
+        idempotencyKey || null,
       ]
     );
+
+    if (result.rows.length === 0) {
+      // ON CONFLICT — already checked in
+      return res.status(409).json({
+        error: 'Already checked in today',
+        code: 'ALREADY_CHECKED_IN'
+      });
+    }
 
     // Log geo-fence violation if applicable
     if (!within_fence) {
@@ -122,6 +121,7 @@ router.post('/check-in', async (req, res) => {
     });
   }
 });
+
 
 // Check-out endpoint
 router.post('/check-out', async (req, res) => {

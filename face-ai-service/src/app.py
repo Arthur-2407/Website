@@ -2,25 +2,35 @@
 """
 Production Face AI Service
 Implements face recognition, liveness detection, and anti-spoofing
+
+SECURITY NOTE: This service is configured for REAL face recognition in production.
+Mock mode is ONLY available in development environment (NODE_ENV != 'production').
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 import time
-import random
 import base64
 from datetime import datetime
 import logging
 import os
 import redis
-import cv2
-import numpy as np
 from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Get deployment environment
+NODE_ENV = os.getenv('NODE_ENV', 'development')
+FACE_RECOGNITION_MODE = os.getenv('FACE_RECOGNITION_MODE', 'mock' if NODE_ENV != 'production' else 'real')
+
+# Log security configuration
+if NODE_ENV == 'production' and FACE_RECOGNITION_MODE == 'mock':
+    logger.critical('❌ SECURITY VIOLATION: Mock face recognition enabled in production!')
+    logger.critical('This service MUST use real face recognition in production!')
+    logger.critical('Set appropriate ML model paths and FACE_RECOGNITION_MODE=real')
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000", "http://localhost:3001"])
@@ -48,7 +58,7 @@ def create_redis_client():
             **client_options
         )
     except Exception as e:
-        logger.error(f"Redis client configuration failed: {e}")
+        logger.warning(f"Redis client configuration failed: {e}")
         return None
 
 
@@ -102,7 +112,10 @@ def service_info():
 
 @app.route('/face/detect', methods=['POST'])
 def face_detect():
-    """Face detection endpoint"""
+    """
+    Face detection endpoint
+    Detects faces in provided image data
+    """
     try:
         data = request.get_json()
         
@@ -112,41 +125,32 @@ def face_detect():
                 'code': 'MISSING_IMAGE'
             }), 400
         
-        # Simulate face detection processing
-        time.sleep(random.uniform(0.1, 0.5))
+        # Security check: In production, enforce real implementation
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.warning(f'[SECURITY] Face detection requested in production without real mode!')
+            return jsonify({
+                'error': 'Face detection service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'faces_detected': 0
+            }), 503
         
-        # Mock detection results
-        faces_detected = random.randint(1, 3)
-        confidence = round(random.uniform(0.85, 0.99), 3)
-        
-        bounding_boxes = []
-        for i in range(faces_detected):
-            bounding_boxes.append({
-                'x': random.randint(50, 200),
-                'y': random.randint(50, 200),
-                'width': random.randint(100, 200),
-                'height': random.randint(100, 200)
+        # In development/mock mode
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning('[DEV] Using mock face detection - DEVELOPMENT ONLY')
+            return jsonify({
+                'faces_detected': 0,
+                'confidence': 0,
+                'bounding_boxes': [],
+                'warning': 'MOCK MODE: This is not real face detection'
             })
         
-        # Cache result in Redis if available
-        if redis_client:
-            cache_key = f"detect_{hash(data['image'])}"
-            redis_client.setex(
-                cache_key, 
-                300,  # 5 minutes
-                json.dumps({
-                    'faces_detected': faces_detected,
-                    'confidence': confidence,
-                    'bounding_boxes': bounding_boxes
-                })
-            )
-        
+        # Real face detection would be called here
+        logger.error('[CRITICAL] Real face detection not implemented')
         return jsonify({
-            'faces_detected': faces_detected,
-            'confidence': confidence,
-            'bounding_boxes': bounding_boxes,
-            'processing_time': round(random.uniform(0.2, 0.8), 3)
-        })
+            'error': 'Face detection service not implemented',
+            'code': 'NOT_IMPLEMENTED',
+            'faces_detected': 0
+        }), 501
         
     except Exception as e:
         logger.error(f"Face detection error: {e}")
@@ -157,54 +161,81 @@ def face_detect():
 
 @app.route('/face/verify', methods=['POST'])
 def face_verify():
-    """Face verification endpoint"""
+    """
+    Face verification endpoint
+    PRODUCTION MODE: Requires real face recognition models and returns verified results
+    DEVELOPMENT MODE: May use mock data for testing
+    """
     try:
         data = request.get_json()
         
         if not data or 'image' not in data or 'employee_id' not in data:
             return jsonify({
                 'error': 'Missing required fields: image, employee_id',
-                'code': 'MISSING_FIELDS'
+                'code': 'MISSING_FIELDS',
+                'authenticated': False
             }), 400
         
-        # Simulate face verification processing
-        time.sleep(random.uniform(1.0, 3.0))
+        # Security check: In production, enforce real face recognition
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.critical(f'[SECURITY] Attempted face verification in production without real mode!')
+            return jsonify({
+                'error': 'Face verification service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'authenticated': False,
+                'details': 'Face recognition models are not loaded. Contact your administrator.'
+            }), 503
         
-        # Mock verification result (85% success rate)
-        verified = random.random() > 0.15
-        confidence = round(random.uniform(0.85, 0.99), 3) if verified else round(random.uniform(0.1, 0.4), 3)
+        # Validate frame data
+        if isinstance(data.get('frames'), list) and len(data['frames']) == 0:
+            return jsonify({
+                'error': 'No frame data provided for liveness verification',
+                'code': 'NO_FRAME_DATA',
+                'authenticated': False
+            }), 400
         
-        result = {
-            'verified': verified,
-            'confidence': confidence,
-            'employee_id': data['employee_id'] if verified else None,
-            'match_score': round(random.uniform(0.85, 0.99), 3) if verified else round(random.uniform(0.1, 0.4), 3),
-            'liveness_detected': random.random() > 0.1,  # 90% pass rate
-            'anti_spoof_passed': verified,  # If verified, assume anti-spoof passed
-            'processing_time': round(random.uniform(1.0, 3.0), 3)
-        }
+        # In development/mock mode: Provide mock verification response
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning('[DEV] Using mock face verification - DEVELOPMENT ONLY')
+            # Mock response with clear indication this is not real
+            return jsonify({
+                'authenticated': False,
+                'face_matched': False,
+                'liveness_passed': False,
+                'spoof_detected': False,
+                'spoof_confidence': 0,
+                'challenge_passed': False,
+                'verified': False,
+                'confidence': 0,
+                'match_score': 0,
+                'errors': ['Mock face verification in development mode - real implementation required for production'],
+                'warning': 'MOCK MODE: This is not real face recognition'
+            })
         
-        # Cache verification result
-        if redis_client:
-            cache_key = f"verify_{data['employee_id']}"
-            redis_client.setex(
-                cache_key,
-                600,  # 10 minutes
-                json.dumps(result)
-            )
-        
-        return jsonify(result)
+        # Real face recognition would be called here (placeholder for actual ML integration)
+        logger.error('[CRITICAL] Real face recognition not implemented')
+        return jsonify({
+            'error': 'Face recognition service not implemented',
+            'code': 'NOT_IMPLEMENTED',
+            'authenticated': False,
+            'details': 'Real face recognition models must be integrated'
+        }), 501
         
     except Exception as e:
         logger.error(f"Face verification error: {e}")
         return jsonify({
             'error': 'Face verification failed',
-            'code': 'VERIFICATION_ERROR'
+            'code': 'VERIFICATION_ERROR',
+            'authenticated': False
         }), 500
 
 @app.route('/face/register', methods=['POST'])
 def face_register():
-    """Face registration endpoint"""
+    """
+    Face registration endpoint
+    PRODUCTION MODE: Requires real face recognition and liveness verification
+    DEVELOPMENT MODE: May use mock data for testing
+    """
     try:
         data = request.get_json()
         
@@ -214,31 +245,34 @@ def face_register():
                 'code': 'MISSING_FIELDS'
             }), 400
         
-        # Simulate face registration processing
-        time.sleep(random.uniform(2.0, 4.0))
+        # Security check: In production, enforce real face recognition
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.critical(f'[SECURITY] Attempted face registration in production without real mode!')
+            return jsonify({
+                'error': 'Face registration service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'details': 'Face recognition models are not loaded. Contact your administrator.'
+            }), 503
         
-        # Mock registration result (95% success rate)
-        registered = random.random() > 0.05
-        quality_score = round(random.uniform(0.8, 0.95), 3)
+        # In development/mock mode: Provide mock registration response
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning('[DEV] Using mock face registration - DEVELOPMENT ONLY')
+            return jsonify({
+                'registered': False,
+                'employee_id': data['employee_id'],
+                'face_id': None,
+                'quality_score': 0,
+                'errors': ['Mock face registration in development mode - real implementation required for production'],
+                'warning': 'MOCK MODE: This is not real face recognition'
+            })
         
-        result = {
-            'registered': registered,
-            'employee_id': data['employee_id'],
-            'face_id': f"face_{random.randint(1000, 9999)}",
-            'quality_score': quality_score,
-            'processing_time': round(random.uniform(2.0, 4.0), 3)
-        }
-        
-        # Store registration in Redis
-        if redis_client:
-            cache_key = f"registered_{data['employee_id']}"
-            redis_client.setex(
-                cache_key,
-                3600,  # 1 hour
-                json.dumps(result)
-            )
-        
-        return jsonify(result)
+        # Real face recognition would be called here (placeholder for actual ML integration)
+        logger.error('[CRITICAL] Real face recognition not implemented')
+        return jsonify({
+            'error': 'Face recognition service not implemented',
+            'code': 'NOT_IMPLEMENTED',
+            'details': 'Real face recognition models must be integrated'
+        }), 501
         
     except Exception as e:
         logger.error(f"Face registration error: {e}")
@@ -249,7 +283,11 @@ def face_register():
 
 @app.route('/face/liveness', methods=['POST'])
 def liveness_check():
-    """Liveness detection endpoint"""
+    """
+    Liveness detection endpoint
+    PRODUCTION MODE: Requires real liveness detection with movement challenges
+    DEVELOPMENT MODE: May use mock data for testing
+    """
     try:
         data = request.get_json()
         
@@ -259,22 +297,33 @@ def liveness_check():
                 'code': 'MISSING_IMAGE'
             }), 400
         
-        # Simulate liveness detection processing
-        time.sleep(random.uniform(0.5, 2.0))
+        # Security check: In production, enforce real liveness detection
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.critical(f'[SECURITY] Attempted liveness check in production without real mode!')
+            return jsonify({
+                'error': 'Liveness detection service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'details': 'Face recognition models are not loaded. Contact your administrator.'
+            }), 503
         
-        # Mock liveness result (90% pass rate)
-        live = random.random() > 0.1
-        confidence = round(random.uniform(0.8, 0.95), 3)
-        challenge_completed = random.choice(['blink', 'smile', 'turn_head'])
+        # In development/mock mode: Provide mock liveness response
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning('[DEV] Using mock liveness detection - DEVELOPMENT ONLY')
+            return jsonify({
+                'live': False,
+                'confidence': 0,
+                'challenge_completed': None,
+                'errors': ['Mock liveness detection in development mode - real implementation required for production'],
+                'warning': 'MOCK MODE: This is not real liveness detection'
+            })
         
-        result = {
-            'live': live,
-            'confidence': confidence,
-            'challenge_completed': challenge_completed,
-            'processing_time': round(random.uniform(0.5, 2.0), 3)
-        }
-        
-        return jsonify(result)
+        # Real liveness detection would be called here (placeholder for actual ML integration)
+        logger.error('[CRITICAL] Real liveness detection not implemented')
+        return jsonify({
+            'error': 'Liveness detection service not implemented',
+            'code': 'NOT_IMPLEMENTED',
+            'details': 'Real face recognition and liveness detection models must be integrated'
+        }), 501
         
     except Exception as e:
         logger.error(f"Liveness detection error: {e}")
@@ -285,7 +334,11 @@ def liveness_check():
 
 @app.route('/api/face-login', methods=['POST'])
 def api_face_login():
-    """Backend-compatible face authentication endpoint."""
+    """
+    Backend-compatible face authentication endpoint.
+    PRODUCTION MODE: Requires real face recognition, liveness detection, and anti-spoofing
+    DEVELOPMENT MODE: May use mock data for testing
+    """
     try:
         data = request.get_json() or {}
         frames = data.get('frames') or []
@@ -300,30 +353,45 @@ def api_face_login():
                 'code': 'MISSING_FIELDS'
             }), 400
 
-        frame_count = min(len(frames), 15)
-        liveness_confidence = min(0.99, 0.65 + frame_count * 0.025)
-        spoof_confidence = 0.05 if frame_count >= 3 else 0.35
-        liveness_passed = liveness_confidence >= 0.75
-        spoof_detected = spoof_confidence >= 0.30
-        face_matched = liveness_passed and not spoof_detected
-        challenge_passed = bool(challenge_type) or challenge_type is None
-        authenticated = face_matched and challenge_passed
+        # Security check: In production, enforce real face recognition
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.critical(f'[SECURITY] Attempted face login in production without real mode!')
+            return jsonify({
+                'success': False,
+                'authenticated': False,
+                'error': 'Face authentication service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'details': 'Face recognition models are not loaded. Contact your administrator.'
+            }), 503
 
+        # In development/mock mode
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning(f'[DEV] Using mock face login for employee {employee_id}')
+            return jsonify({
+                'success': False,
+                'authenticated': False,
+                'confidence': 0,
+                'liveness_passed': False,
+                'spoof_detected': False,
+                'spoof_confidence': 0,
+                'challenge_passed': False,
+                'face_matched': False,
+                'employee_id': employee_id,
+                'errors': ['Mock face authentication in development mode - real implementation required for production'],
+                'warning': 'MOCK MODE: This is not real face recognition'
+            })
+
+        # Real face recognition would be called here
+        logger.error('[CRITICAL] Real face recognition not implemented')
         return jsonify({
-            'success': authenticated,
-            'authenticated': authenticated,
-            'confidence': round(liveness_confidence, 3),
-            'liveness_passed': liveness_passed,
-            'spoof_detected': spoof_detected,
-            'spoof_confidence': round(spoof_confidence, 3),
-            'challenge_passed': challenge_passed,
-            'face_matched': face_matched,
+            'success': False,
+            'authenticated': False,
+            'error': 'Face authentication service not implemented',
+            'code': 'NOT_IMPLEMENTED',
             'employee_id': employee_id,
-            'errors': [] if authenticated else ['Face authentication failed'],
-            'timestamps': {
-                'total': round(random.uniform(0.25, 0.8), 3)
-            }
-        })
+            'details': 'Real face recognition models must be integrated'
+        }), 501
+
     except Exception as e:
         logger.error(f"API face login error: {e}")
         return jsonify({
@@ -335,7 +403,11 @@ def api_face_login():
 
 @app.route('/api/register-face', methods=['POST'])
 def api_register_face():
-    """Backend-compatible face registration endpoint."""
+    """
+    Backend-compatible face registration endpoint.
+    PRODUCTION MODE: Requires real face recognition and quality validation
+    DEVELOPMENT MODE: May use mock data for testing
+    """
     try:
         data = request.get_json() or {}
         frames = data.get('frames') or []
@@ -348,16 +420,39 @@ def api_register_face():
                 'code': 'MISSING_FIELDS'
             }), 400
 
-        quality_score = min(0.99, 0.70 + min(len(frames), 10) * 0.025)
+        # Security check: In production, enforce real face recognition
+        if NODE_ENV == 'production' and FACE_RECOGNITION_MODE != 'real':
+            logger.critical(f'[SECURITY] Attempted face registration in production without real mode!')
+            return jsonify({
+                'success': False,
+                'error': 'Face registration service not properly configured for production',
+                'code': 'FACE_SERVICE_MISCONFIGURED',
+                'details': 'Face recognition models are not loaded. Contact your administrator.'
+            }), 503
 
+        # In development/mock mode
+        if FACE_RECOGNITION_MODE == 'mock':
+            logger.warning(f'[DEV] Using mock face registration for employee {employee_id}')
+            return jsonify({
+                'success': False,
+                'registered': False,
+                'message': 'Mock face registration in development mode - real implementation required for production',
+                'employee_id': employee_id,
+                'quality_score': 0,
+                'timestamp': datetime.now().isoformat(),
+                'warning': 'MOCK MODE: This is not real face recognition'
+            })
+
+        # Real face recognition would be called here
+        logger.error('[CRITICAL] Real face recognition not implemented')
         return jsonify({
-            'success': True,
-            'registered': True,
-            'message': 'Face registered successfully',
+            'success': False,
+            'error': 'Face registration service not implemented',
+            'code': 'NOT_IMPLEMENTED',
             'employee_id': employee_id,
-            'quality_score': round(quality_score, 3),
-            'timestamp': datetime.now().isoformat()
-        })
+            'details': 'Real face recognition models must be integrated'
+        }), 501
+
     except Exception as e:
         logger.error(f"API face registration error: {e}")
         return jsonify({

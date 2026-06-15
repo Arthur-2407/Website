@@ -1,0 +1,180 @@
+{
+  "timestamp": "2026-06-14T00:00:00Z",
+  "auditPhase": "Bug Investigation & Root Cause Analysis",
+  "bugs": {
+    "bug_1_dualLogout": {
+      "title": "Dual Logout Handlers & Inconsistent Session Cleanup",
+      "severity": "HIGH",
+      "affectedFiles": [
+        "frontend/src/components/layout/Navbar.tsx (line 43-50)",
+        "frontend/src/pages/DashboardPage.tsx (line 307-315)",
+        "frontend/src/contexts/AuthContext.tsx (line 94-115)",
+        "frontend/src/api/authApi.ts (line 92-96)",
+        "backend-api/src/modules/auth/routes.js (line 865-885)"
+      ],
+      "rootCause": {
+        "issue1": "Multiple logout entry points without unified cleanup",
+        "issue2": "Frontend logout() calls authApi.logout() but does NOT send refreshToken to backend",
+        "issue3": "AuthContext.logout() catches errors but still clears state - may leave orphaned sessions on failure",
+        "issue4": "Backend logout endpoint doesn't require authentication - allows guest logout",
+        "issue5": "WebSocket and Zustand store cleanup happens after token cleanup - race condition possible"
+      },
+      "currentFlow": {
+        "entry1": "Navbar.tsx handleLogout() → logout() from AuthContext",
+        "entry2": "DashboardPage.tsx handleLogout() → logout() from AuthContext (identical)",
+        "flow": "logout() calls authApi.logout() → POST /api/auth/logout (no refreshToken)",
+        "backend": "Backend tries to verify refreshToken from req.body but it's missing",
+        "cleanup": "Frontend clears localStorage, state, store, disconnect websocket"
+      },
+      "problems": [
+        "If API call fails, client still clears tokens but server still has them (orphaned session)",
+        "refreshToken is never sent to backend for proper revocation",
+        "Backend doesn't validate that requester owns the tokens being revoked",
+        "No verification that logout actually succeeded before clearing client state"
+      ],
+      "fix": {
+        "approach": "Single authoritative logout flow with proper error handling",
+        "steps": [
+          "Consolidate logout handler to one function in AuthContext",
+          "Pass refreshToken to authApi.logout()",
+          "Add auth middleware to logout endpoint",
+          "Verify token revocation succeeded before clearing client state",
+          "Ensure WebSocket cleanup only after token cleanup",
+          "Implement proper error recovery (retry with exponential backoff)"
+        ]
+      }
+    },
+    "bug_2_imageUpload": {
+      "title": "Internal Server Error During Image Upload",
+      "severity": "CRITICAL",
+      "affectedFiles": [
+        "frontend/src/utils/fileUtils.ts (lines 1-120)",
+        "frontend/src/components/AdminPage.tsx (line 165-180)",
+        "frontend/src/pages/DashboardPage.tsx (line 53-95)",
+        "backend-api/src/modules/work-report/routes.js (line 31-75)",
+        "backend-api/src/middleware/errorHandler.js (full file)"
+      ],
+      "rootCause": {
+        "issue1": "No explicit payload size validation in frontend",
+        "issue2": "Base64-encoded images are significantly larger than binary (33% overhead)",
+        "issue3": "Backend routes accept image_base64 but no Content-Length check",
+        "issue4": "Express body parser might have default 100kb limit, base64 images exceed this",
+        "issue5": "Error responses might not be properly serialized when payload parsing fails",
+        "issue6": "No catch block for failed Base64 decoding in face-ai-service"
+      },
+      "currentFlow": {
+        "frontend": "fileUtils.readFileAsBase64() → base64 string (size unbounded)",
+        "submission": "Image sent as image_base64 in JSON body",
+        "backend": "Express parses JSON → routes access req.body.image_base64",
+        "storage": "Stored directly in PostgreSQL or sent to face-ai-service"
+      },
+      "problems": [
+        "Large image files (> 1MB) converted to base64 (> 1.3MB) + JSON overhead",
+        "Express bodyParser.json() default limit is 100kb - request fails at parsing",
+        "Error occurs before route handler, so error handler might not catch it properly",
+        "Face AI service doesn't validate base64 format before decoding",
+        "No progress indication for large uploads"
+      ],
+      "fix": {
+        "approach": "Implement proper payload size handling and validation",
+        "steps": [
+          "Add MAX_UPLOAD_SIZE constant (e.g., 5MB for binary, 7MB for base64)",
+          "Frontend validates file size BEFORE conversion",
+          "Configure Express bodyParser with explicit limit",
+          "Add image compression/resizing before base64 conversion",
+          "Validate base64 format before sending to backend",
+          "Backend validates base64 format and size before processing",
+          "Face AI service validates frames before decoding"
+        ]
+      }
+    },
+    "bug_3_cameraFrames": {
+      "title": "Camera Fails to Capture Frames Consistently",
+      "severity": "CRITICAL",
+      "affectedFiles": [
+        "frontend/src/components/camera/FaceCamera.tsx (lines 1-220)",
+        "frontend/src/hooks/useCamera.ts (lines 1-160)",
+        "frontend/src/pages/DashboardPage.tsx (line 53-95)",
+        "frontend/src/pages/BootstrapSetupPage.tsx (line 1-400)",
+        "frontend/src/components/FaceLogin.tsx (lines 60-115)"
+      ],
+      "rootCause": {
+        "issue1": "Closure capture in processFrame might hold stale captureFrameRef.current",
+        "issue2": "captureFrame() in useCamera might fail if canvas.toDataURL() throws error",
+        "issue3": "requestAnimationFrame called regardless of whether capture succeeded",
+        "issue4": "Error in capture loop is swallowed - no indication frames aren't captured",
+        "issue5": "Stream might not be ready when video element tries to draw",
+        "issue6": "Double-mount in StrictMode might start camera twice or cause cleanup races",
+        "issue7": "Video dimensions might be 0 when canvas tries to draw"
+      ],
+      "currentFlow": {
+        "mount": "FaceCamera mounts → startCamera() if autoCapture=true",
+        "stream": "useCamera creates MediaStream and sets stream state",
+        "video": "videoRef.current.srcObject = stream",
+        "capture": "requestAnimationFrame(processFrame) runs at ~60fps",
+        "frame": "processFrame calls captureFrameRef.current() every captureInterval ms",
+        "callback": "Frame passed to onCapture callback"
+      },
+      "problems": [
+        "captureFrame() called but ref might point to old function (closure issue)",
+        "canvas.toDataURL() might fail if video not fully loaded or dimensions are 0",
+        "Errors are caught and logged but frame counter never increments",
+        "onCaptureRef might be stale if onCapture prop changed",
+        "video.videoWidth/videoHeight might return 0 if stream not ready",
+        "Multiple instances might fight over camera device (browser locks it)"
+      ],
+      "fix": {
+        "approach": "Fix closure issues and add robust error handling & diagnostics",
+        "steps": [
+          "Ensure captureFrameRef is properly updated on every render",
+          "Add video 'loadedmetadata' event listener to verify dimensions",
+          "Validate video.videoWidth > 0 before drawing to canvas",
+          "Add frame counter increment in onCapture (not in capture function)",
+          "Verify stream is ready before attempting capture",
+          "Add detailed console logging to track frame capture lifecycle",
+          "Implement exponential backoff for capture failures",
+          "Handle case where canvas context is null"
+        ]
+      }
+    }
+  },
+  "testCases": {
+    "bug1_logout": [
+      "Test logout from Navbar - verify all tokens cleared",
+      "Test logout from Dashboard - verify all tokens cleared",
+      "Test logout with failed API call - verify client state cleanup",
+      "Test logout without refreshToken - should still work",
+      "Test sequential logouts - should be idempotent",
+      "Test logout while websocket connecting - verify no orphaned connections"
+    ],
+    "bug2_imageUpload": [
+      "Upload 100kb image - should succeed",
+      "Upload 1MB image - should succeed",
+      "Upload 5MB image - should succeed",
+      "Upload 10MB image - should fail gracefully",
+      "Upload corrupted base64 - should fail with clear error",
+      "Upload with network timeout - should show error message",
+      "Concurrent uploads - should handle properly"
+    ],
+    "bug3_cameraFrames": [
+      "Camera starts and captures at least 1 frame",
+      "Frame counter increments with each capture",
+      "Frames continue capturing in background",
+      "Capture stops when component unmounts",
+      "Manual capture works independently of auto-capture",
+      "Camera permission denied - shows error",
+      "Multiple camera devices - can switch between them",
+      "Stream is released on unmount (no device lock)"
+    ]
+  },
+  "nextSteps": [
+    "Implement fixes for bug 1 (Logout)",
+    "Implement fixes for bug 2 (Image Upload)",
+    "Implement fixes for bug 3 (Camera Frames)",
+    "Run TypeScript validation",
+    "Run ESLint",
+    "Build project",
+    "Run test cases",
+    "Create checkpoints after each fix"
+  ]
+}

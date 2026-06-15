@@ -1,0 +1,16 @@
+CHECKPOINT: CHECKPOINT_TRIGGER_CASCADE_FIX
+DATE: 2026-06-15
+
+SUMMARY:
+Fixed a database trigger cascade race condition where ON DELETE SET NULL on 'audit_logs' (for user_id and actor_employee_id) caused compliance sync trigger functions to copy the deleted employee's ID back to the NULL column, resulting in foreign key constraint violations (violates foreign key constraint "audit_logs_actor_employee_id_fkey").
+
+CHANGES:
+- Created d:\Website\backend-api\src\migrations\018_fix_compliance_triggers_for_cascades.up.sql
+
+ROLLBACK INSTRUCTIONS:
+To rollback, run the following SQL commands in the PostgreSQL database:
+1. DROP TRIGGER IF EXISTS trg_sync_audit_logs_compliance ON audit_logs;
+2. DROP FUNCTION IF EXISTS sync_audit_logs_compliance();
+3. Re-apply Migration 015 trigger definitions (see d:\Website\backend-api\src\migrations\015_audit_and_notification_compliance.up.sql).
+4. Delete migration record from schema_migrations:
+   DELETE FROM schema_migrations WHERE id = '018_fix_compliance_triggers_for_cascades';

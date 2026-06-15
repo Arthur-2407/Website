@@ -54,5 +54,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-# Start application
-CMD ["python", "src/app.py"]
+# Start application — use main.py which has real ML pipeline (app.py is mock-only)
+CMD ["python", "src/main.py"]

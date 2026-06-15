@@ -31,6 +31,22 @@ jest.mock('../migrations/runMigrations', () => ({
   runMigrations: jest.fn().mockResolvedValue(true),
 }));
 
+jest.mock('axios', () => ({
+  post: jest.fn().mockImplementation((url) => {
+    if (url.includes('/api/register-face')) {
+      return Promise.resolve({
+        data: {
+          success: true,
+          embedding: [0.1, 0.2, 0.3],
+          model_version: '2.0-facenet-vggface2',
+          quality_score: 0.95
+        }
+      });
+    }
+    return Promise.reject(new Error('Not mocked'));
+  })
+}));
+
 jest.mock('../middleware/authMiddleware', () => ({
   authenticateToken: (req, res, next) => {
     const authHeader = req.headers.authorization;

@@ -1,0 +1,11 @@
+CHECKPOINT: CHECKPOINT_GATEWAY_TIMEOUT_ROBUSTNESS
+DATE: 2026-06-15
+
+SUMMARY:
+Fixed an Express crash in the '/bootstrap/setup' endpoint. If the face-ai-service times out or fails after the request has already been aborted or timed out by Express timeout middleware (sending headers to the client), attempting to send a subsequent 503 or 500 response raises "ERR_HTTP_HEADERS_SENT" and crashes the Node process.
+
+CHANGES:
+- Added 'if (res.headersSent) return;' checks in '/bootstrap/setup' before sending responses.
+
+ROLLBACK INSTRUCTIONS:
+Restore d:\Website\backend-api\src\modules\auth\routes.js from the pre-repair snapshot.

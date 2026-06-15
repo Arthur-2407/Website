@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp": "2026-06-14T16:13:54Z",
+    "trigger": "manual_e2e_verification",
+    "status": "SUCCESS",
+    "actions": [
+      "DB fresh initialization",
+      "Bootstrap status verification",
+      "Admin registration via bootstrap setup",
+      "Restart validation",
+      "Admin face login with password",
+      "Admin password-only login blocked check",
+      "Employee creation",
+      "Employee password login",
+      "Employee face image enrollment",
+      "Employee face login via image",
+      "Employee face login via camera",
+      "API health check"
+    ]
+  }
+]

@@ -35,6 +35,14 @@ const FaceCamera = ({
 
   const [isAutoCapturing, setIsAutoCapturing] = useState(autoCapture);
 
+  // STABILIZATION: Sync isAutoCapturing state when the autoCapture prop changes.
+  // useState only initialises from the prop once; parent components that flip
+  // autoCapture (e.g. BootstrapSetupPage setting it to false after 5 frames)
+  // must be reflected so capturing stops in the camera loop.
+  useEffect(() => {
+    setIsAutoCapturing(autoCapture);
+  }, [autoCapture]);
+
   // Keep refs up-to-date
   captureFrameRef.current = captureFrame;
   onCaptureRef.current = onCapture;

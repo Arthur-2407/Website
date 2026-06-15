@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-06-15T13:19:18.396Z",
+  "features": {
+    "Admin Bootstrap": {
+      "component": "BootstrapSetupPage",
+      "apis": [
+        "GET /api/auth/bootstrap/status",
+        "POST /api/auth/bootstrap/setup"
+      ],
+      "tables": [
+        "employees",
+        "face_embeddings",
+        "admin_configuration"
+      ],
+      "recoveryUrl": "/setup/admin-face?recovery=true"
+    },
+    "MFA Face Login": {
+      "component": "FaceLogin",
+      "apis": [
+        "POST /api/auth/pre-login-check",
+        "POST /api/auth/login",
+        "POST /api/auth/face-login"
+      ],
+      "tables": [
+        "employees",
+        "face_embeddings",
+        "login_logs"
+      ],
+      "recoveryUrl": "/recovery-request"
+    },
+    "Check-in / Check-out": {
+      "component": "AttendancePage",
+      "apis": [
+        "POST /api/attendance/check-in",
+        "POST /api/attendance/check-out"
+      ],
+      "tables": [
+        "attendance_records"
+      ],
+      "recoveryUrl": null
+    }
+  }
+}

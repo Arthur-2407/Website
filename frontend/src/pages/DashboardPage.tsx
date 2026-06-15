@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   FaUserClock, 
@@ -8,7 +7,6 @@ import {
   FaShieldAlt, 
   FaMapMarkerAlt,
   FaCamera,
-  FaSignOutAlt
 } from 'react-icons/fa';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { attendanceApi } from '@api/attendanceApi';
@@ -39,8 +37,7 @@ interface SecurityEvent {
 const REFRESH_INTERVAL_MS = 60_000;
 
 const DashboardPage: React.FC = () => {
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { showError, showSuccess } = useNotification();
   
   
@@ -310,17 +307,6 @@ const DashboardPage: React.FC = () => {
     }
   };
 
-  // Handle logout
-  const handleLogout = async () => {
-    try {
-      await logout();
-      navigate('/login');
-    } catch (error: any) {
-      console.error('Logout error:', error);
-      showError('Logout failed. Please try again.');
-    }
-  };
-
   // Chart data — weeklyChartData is built from real API attendance records
   const attendanceChartData = weeklyChartData.length > 0
     ? weeklyChartData
@@ -339,20 +325,9 @@ const DashboardPage: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-gray-600 mt-1">Welcome back, {(user as any)?.firstName ?? ''} {(user as any)?.lastName ?? ''}</p>
-          </div>
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={handleLogout}
-              className="flex items-center px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-            >
-              <FaSignOutAlt className="mr-2" />
-              Logout
-            </button>
-          </div>
+        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-gray-600 mt-1">Welcome back, {(user as any)?.firstName ?? ''} {(user as any)?.lastName ?? ''}</p>
         </div>
       </header>
 

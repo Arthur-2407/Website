@@ -45,7 +45,7 @@ function isTransientError(error: AxiosError): boolean {
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
-  timeout: 15000, // 15s timeout — prevents forever-hanging requests
+  timeout: 30000, // 30s timeout — prevents timeout under concurrent cold-start load
   headers: {
     'Content-Type': 'application/json',
   },

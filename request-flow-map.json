@@ -1,0 +1,112 @@
+{
+  "timestamp": "2026-06-15T11:51:19Z",
+  "flows": {
+    "faceLogin": {
+      "name": "Face Authentication Chain",
+      "steps": [
+        {
+          "step": 1,
+          "source": "Browser (Client)",
+          "destination": "Nginx Reverse Proxy",
+          "protocol": "HTTPS",
+          "payload": "JSON { employeeId: string, frames: string[], password?: string, challengeType?: string, location?: object }",
+          "route": "POST /api/auth/face-login"
+        },
+        {
+          "step": 2,
+          "source": "Nginx Reverse Proxy",
+          "destination": "Express Backend API",
+          "protocol": "HTTP (internal)",
+          "route": "POST /api/auth/face-login"
+        },
+        {
+          "step": 3,
+          "source": "Express Backend API",
+          "destination": "PostgreSQL Database",
+          "protocol": "SQL Query",
+          "details": "Fetch employee profile (role, locked state, password_hash) and get active face embedding vector."
+        },
+        {
+          "step": 4,
+          "source": "Express Backend API",
+          "destination": "Face AI Service",
+          "protocol": "HTTP (internal POST)",
+          "payload": "JSON { frames: string[], employeeId: string, employee_id: string, challengeType: string, challenge_type: string, stored_embedding: array[float] }",
+          "route": "POST /api/face-login",
+          "timeout": "FACE_AI_TIMEOUT_MS (fallback 10000ms)"
+        },
+        {
+          "step": 5,
+          "source": "Face AI Service",
+          "destination": "Express Backend API",
+          "protocol": "JSON Response",
+          "payload": "JSON { authenticated: boolean, liveness_passed: boolean, spoof_detected: boolean, spoof_confidence: float, challenge_passed: boolean, face_matched: boolean, errors: string[] }"
+        },
+        {
+          "step": 6,
+          "source": "Express Backend API",
+          "destination": "PostgreSQL Database",
+          "protocol": "SQL Transaction",
+          "details": "Insert verification result into login_logs, reset employee login failure counter."
+        },
+        {
+          "step": 7,
+          "source": "Express Backend API",
+          "destination": "Nginx / Browser",
+          "protocol": "JSON Response",
+          "payload": "JSON { success: true, authenticated: true, tokens: { accessToken: string, refreshToken: string }, employee: object }"
+        }
+      ]
+    },
+    "faceEnrollment": {
+      "name": "Face Enrollment & Database Persistence Chain",
+      "steps": [
+        {
+          "step": 1,
+          "source": "Browser (Client)",
+          "destination": "Nginx Reverse Proxy",
+          "protocol": "HTTPS",
+          "payload": "JSON { employeeId: string, frames: string[] }",
+          "route": "POST /api/face-management/admin-register"
+        },
+        {
+          "step": 2,
+          "source": "Nginx Reverse Proxy",
+          "destination": "Express Backend API",
+          "protocol": "HTTP (internal)",
+          "route": "POST /api/face-management/admin-register"
+        },
+        {
+          "step": 3,
+          "source": "Express Backend API",
+          "destination": "Face AI Service",
+          "protocol": "HTTP (internal POST)",
+          "payload": "JSON { frames: string[], employeeId: string, employee_id: string }",
+          "route": "POST /api/register-face",
+          "timeout": "FACE_AI_TIMEOUT_MS (fallback 30000ms)"
+        },
+        {
+          "step": 4,
+          "source": "Face AI Service",
+          "destination": "Express Backend API",
+          "protocol": "JSON Response",
+          "payload": "JSON { success: true, registered: true, embedding: array[float], quality_score: float, model_version: string }"
+        },
+        {
+          "step": 5,
+          "source": "Express Backend API",
+          "destination": "PostgreSQL Database",
+          "protocol": "SQL Transaction",
+          "details": "BEGIN transaction; deactivate existing embeddings (set is_active = FALSE); INSERT new embedding vector; UPDATE employees SET face_enrolled = TRUE; INSERT into face_audit_logs; COMMIT transaction."
+        },
+        {
+          "step": 6,
+          "source": "Express Backend API",
+          "destination": "Nginx / Browser",
+          "protocol": "JSON Response",
+          "payload": "JSON { success: true, message: string }"
+        }
+      ]
+    }
+  }
+}

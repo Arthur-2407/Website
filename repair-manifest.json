@@ -1,0 +1,43 @@
+{
+  "checkpointName": "CHECKPOINT_DEVICE_TRUST_ALIGN",
+  "timestamp": "2026-06-15T13:19:46.146Z",
+  "filesModified": [
+    "frontend/src/components/DegradedModeBanner.tsx",
+    "backend-api/src/migrations/017_restore_admin_face_embedding.up.sql",
+    "frontend/src/components/FaceLogin.tsx",
+    "frontend/src/pages/BootstrapSetupPage.tsx",
+    "frontend/src/components/camera/FaceCamera.tsx",
+    "frontend/src/api/authApi.ts"
+  ],
+  "filesVerified": [
+    "frontend/src/components/DegradedModeBanner.tsx",
+    "backend-api/src/migrations/017_restore_admin_face_embedding.up.sql",
+    "frontend/src/components/FaceLogin.tsx",
+    "frontend/src/pages/BootstrapSetupPage.tsx",
+    "frontend/src/components/camera/FaceCamera.tsx",
+    "frontend/src/api/authApi.ts",
+    "backend-api/src/modules/auth/routes.js",
+    "face-ai-service/src/main.py"
+  ],
+  "servicesVerified": [
+    "attendance-db-prod",
+    "attendance-redis-prod",
+    "backend-api-prod",
+    "face-ai-service-prod",
+    "attendance-frontend-prod",
+    "attendance-nginx-prod"
+  ],
+  "endpointsVerified": [
+    "GET /health",
+    "GET /face-ai/health",
+    "GET /api/auth/bootstrap/status"
+  ],
+  "rollbackMapping": {
+    "frontend/src/components/DegradedModeBanner.tsx": "source/frontend/src/components/DegradedModeBanner.tsx",
+    "backend-api/src/migrations/017_restore_admin_face_embedding.up.sql": null,
+    "frontend/src/components/FaceLogin.tsx": "source/frontend/src/components/FaceLogin.tsx",
+    "frontend/src/pages/BootstrapSetupPage.tsx": "source/frontend/src/pages/BootstrapSetupPage.tsx",
+    "frontend/src/components/camera/FaceCamera.tsx": "source/frontend/src/components/camera/FaceCamera.tsx",
+    "frontend/src/api/authApi.ts": "source/frontend/src/api/authApi.ts"
+  }
+}

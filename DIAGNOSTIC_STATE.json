@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-06-15T12:13:00Z",
+  "issue": "Base64 Prefix Decoding Mismatch in Bootstrap Setup",
+  "findings": "BootstrapSetupPage.tsx's handleFrameCapture pushes raw data URL frames with the prefix 'data:image/jpeg;base64,'. Python's base64.b64decode in face-ai-service fails to decode it properly, resulting in corrupt frames, empty list, and 400 Bad Request error.",
+  "status": "investigated"
+}

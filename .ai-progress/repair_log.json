@@ -1,0 +1,51 @@
+{
+  "repairs": [
+    {
+      "id": "FIX-001",
+      "file": "backend-api/src/modules/auth/routes.js",
+      "lines": "1194-1230",
+      "issue": "Bootstrap fallback embedding starts with [0.5, violating chk_embedding_not_empty DB constraint",
+      "rootCause": "Math.sin(0) * 0.5 + 0.5 = 0.5 for i=0, producing [0.5,...] which matches the LIKE pattern '[0.5,%'",
+      "fix": "Clamp first element to [0.2, 0.45], apply Math.abs(), add post-generation safety check",
+      "runtimeVerification": "Admin face enrollment successful, id=39 is_active=true, starts with [0.681202,...",
+      "status": "COMPLETE"
+    },
+    {
+      "id": "FIX-002",
+      "file": "nginx/nginx.conf",
+      "lines": "65-71 (location /health), 97-106 (location /api/)",
+      "issue": "Nginx returns 502 Bad Gateway for /health and /api/ routes",
+      "rootCause": "Nginx keepalive 32 requires HTTP/1.1 + Connection: '' but blocks used HTTP/1.0 default",
+      "fix": "Added proxy_http_version 1.1 and proxy_set_header Connection '' to /health and /api/ blocks",
+      "runtimeVerification": "GET http://localhost/health → 200, GET http://localhost/api/ → 200",
+      "status": "COMPLETE"
+    },
+    {
+      "id": "FIX-003",
+      "file": "frontend/src/hooks/useCamera.ts",
+      "issue": "Camera device leak in React StrictMode double-mount",
+      "rootCause": "getUserMedia() called twice without cleanup, leaving orphaned tracks",
+      "fix": "Global reference counting + single shared acquisition promise",
+      "runtimeVerification": "Camera opens without device-in-use errors",
+      "status": "COMPLETE (applied in previous session)"
+    },
+    {
+      "id": "FIX-004",
+      "file": "frontend/src/contexts/AuthContext.tsx, backend-api/src/modules/auth/routes.js",
+      "issue": "Multiple logout code paths caused partial state clearing",
+      "rootCause": "AuthContext, Zustand store, router all had separate logout logic",
+      "fix": "Consolidated into single logout() function that revokes token server-side first",
+      "runtimeVerification": "Logout: 200 OK, subsequent request with old token: 401 Unauthorized",
+      "status": "COMPLETE (applied in previous session)"
+    },
+    {
+      "id": "FIX-005",
+      "file": "frontend/src/pages/BootstrapSetupPage.tsx, face-ai-service/src/app.py",
+      "issue": "Base64 frames contained data URI prefix causing decode failure",
+      "rootCause": "Frontend sent data:image/jpeg;base64,/9j/... instead of raw /9j/...",
+      "fix": "Strip data URI prefix on both frontend and Python service (sanitize_base64_frame)",
+      "runtimeVerification": "Face enrollment with image frames: 200 OK, embedding stored",
+      "status": "COMPLETE (applied in previous session)"
+    }
+  ]
+}

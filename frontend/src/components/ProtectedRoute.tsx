@@ -21,7 +21,17 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requiredRole,
   requiredRoles = []
 }) => {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isHydrating } = useAuth();
+
+  // If restoring session, show loading spinner to prevent premature redirect
+  if (isHydrating) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center font-sans text-white">
+        <div className="h-12 w-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-slate-400 text-sm">Restoring session...</p>
+      </div>
+    );
+  }
 
   // Check if user is authenticated
   if (!isAuthenticated || !user) {

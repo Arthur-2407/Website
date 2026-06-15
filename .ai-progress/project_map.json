@@ -1,0 +1,88 @@
+{
+  "projectName": "Enterprise Attendance & Face Recognition System",
+  "timestamp": "2026-06-14T00:00:00Z",
+  "sections": {
+    "frontend": {
+      "rootDir": "d:\\Website\\frontend",
+      "buildTool": "Vite",
+      "framework": "React 19.2.4 with TypeScript",
+      "keyDependencies": ["framer-motion", "recharts", "axios", "react-icons"],
+      "structure": {
+        "src/components": "Reusable UI components including FaceCamera, Navbar, camera components",
+        "src/pages": "Page-level components: LoginPage, DashboardPage, BootstrapSetupPage, AdminPage, etc.",
+        "src/hooks": "Custom hooks: useCamera, useAsyncCoordinator, etc.",
+        "src/contexts": "Context providers: AuthContext, NotificationContext, etc.",
+        "src/services": "API and service layer: api.ts, websocketService, locationService",
+        "src/api": "API endpoint wrappers: authApi, attendanceApi, faceManagementApi, leaveApi, etc.",
+        "src/utils": "Utility functions: fileUtils, errorHandler, logger, validators"
+      },
+      "criticalComponents": {
+        "FaceCamera": "Multi-frame capture component with auto-capture loop via requestAnimationFrame",
+        "FaceLogin": "Face authentication page with liveness detection and challenge-response",
+        "BootstrapSetupPage": "Admin bootstrap with face enrollment and password setup",
+        "AuthContext": "Global authentication state management with token refresh",
+        "Navbar": "Navigation with logout button and user menu"
+      },
+      "bugs": ["Dual logout handlers", "Camera frame capture", "Missing error boundaries"]
+    },
+    "backend": {
+      "rootDir": "d:\\Website\\backend-api\\src",
+      "runtime": "Node.js with Express",
+      "dbDriver": "PostgreSQL 15",
+      "keyDependencies": ["express", "pg", "jsonwebtoken", "multer", "cors"],
+      "structure": {
+        "modules/auth": "Authentication endpoints: login, logout, refresh, face-login, register-face, bootstrap",
+        "modules/attendance": "Check-in/check-out with geofence validation",
+        "modules/face-management": "Face profile CRUD and admin override functions",
+        "modules/security": "Security monitoring, audit logging, impossible travel detection",
+        "middleware": "Auth, error handling, logging, rate limiting, CORS",
+        "config": "Database connection, logger, JWT utilities",
+        "migrations": "Database schema migrations"
+      },
+      "criticalEndpoints": {
+        "POST /api/auth/logout": "Token blacklist + refresh revocation",
+        "POST /api/auth/face-login": "Multi-frame liveness detection + verification",
+        "POST /api/auth/register-face": "Face registration with quality validation",
+        "POST /api/auth/bootstrap/setup": "Initial admin setup with face enrollment"
+      },
+      "bugs": ["Logout token cleanup issues", "Image upload payload handling", "Error responses for missing streams"]
+    },
+    "faceAiService": {
+      "rootDir": "d:\\Website\\face-ai-service\\src",
+      "runtime": "Python 3.9+ with Flask",
+      "keyDependencies": ["flask", "opencv", "tensorflow", "torch", "mediapipe"],
+      "modules": {
+        "face_detection": "RetinaFace-based face detection with OpenCV fallback",
+        "liveness_detection": "Multi-frame liveness analysis with MediaPipe landmarks",
+        "anti_spoof_detection": "Liveness detection with blink + motion analysis",
+        "tensorrt": "TensorRT optimization for face embeddings"
+      },
+      "criticalEndpoints": {
+        "POST /api/face-login": "Backend-compatible authentication endpoint",
+        "POST /api/register-face": "Face registration with quality scoring"
+      },
+      "bugs": ["Error handling for failed frame processing", "Base64 decoding errors"]
+    },
+    "database": {
+      "type": "PostgreSQL 15",
+      "criticalTables": {
+        "employees": "User accounts with role-based access",
+        "face_embeddings": "Face biometric vectors and metadata",
+        "attendance_records": "Check-in/check-out logs with geofence data",
+        "security_events": "Audit trail for authentication attempts",
+        "token_blacklist": "Revoked tokens for logout enforcement"
+      ]
+    },
+    "deployment": {
+      "docker": {
+        "services": ["PostgreSQL", "Redis", "Backend API", "Face AI Service", "Frontend", "Nginx"],
+        "orchestration": "docker-compose.yml (dev), docker-compose.prod.yml (prod)"
+      }
+    }
+  },
+  "knownIssues": {
+    "1_dualLogout": "Multiple logout buttons/handlers creating inconsistent state cleanup",
+    "2_imageUpload": "Internal server error during image upload - likely payload/validation issue",
+    "3_cameraFrames": "Camera fails to capture frames consistently - stream lifecycle or closure issues"
+  }
+}
