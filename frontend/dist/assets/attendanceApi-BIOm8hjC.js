@@ -1,0 +1,2 @@
+import{t as e}from"./api-ChvaUF9t.js";var t={checkIn:async t=>await e.post(`/attendance/check-in`,t),checkOut:async t=>await e.post(`/attendance/check-out`,t),getToday:async()=>await e.get(`/attendance/today`),getHistory:async t=>await e.get(`/attendance/history`,{params:t}),getStats:async(t=`month`)=>await e.get(`/attendance/stats?period=${t}`)};export{t};
+//# sourceMappingURL=attendanceApi-BIOm8hjC.js.map

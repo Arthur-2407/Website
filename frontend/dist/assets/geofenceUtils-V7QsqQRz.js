@@ -1,0 +1,2 @@
+var e=e=>e<1e3?`${Math.round(e)} meters`:`${(e/1e3).toFixed(2)} km`,t=e=>e?`text-green-600`:`text-red-600`,n=e=>e?`Within Office Radius`:`Outside Office Radius`;export{t as n,n as r,e as t};
+//# sourceMappingURL=geofenceUtils-V7QsqQRz.js.map

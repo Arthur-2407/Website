@@ -1,0 +1,2 @@
+import{t as e}from"./api-ChvaUF9t.js";var t={faceLogin:async(t,n)=>await e.post(`/auth/face-login`,t,{signal:n}),registerFace:async t=>await e.post(`/auth/register-face`,t),refreshToken:async t=>await e.post(`/auth/refresh`,t),logout:async()=>await e.post(`/auth/logout`),checkBootstrapStatus:async()=>await e.get(`/auth/bootstrap/status`),bootstrapSetup:async t=>await e.post(`/auth/bootstrap/setup`,t)};export{t};
+//# sourceMappingURL=authApi-BqDpiRPS.js.map

@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   FaGauge, 
   FaUserClock, 
@@ -21,6 +21,7 @@ interface NavItem {
 const Navbar = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const navigation: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: <FaGauge /> },
@@ -43,8 +44,10 @@ const Navbar = () => {
   const handleLogout = async () => {
     try {
       await logout();
+      navigate('/login');
     } catch (error) {
       console.error('Logout error:', error);
+      navigate('/login');
     }
   };
 
