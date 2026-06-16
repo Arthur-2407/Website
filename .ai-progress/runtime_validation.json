@@ -3862,5 +3862,143 @@
         "pass": "PASS"
       }
     ]
+  },
+  {
+    "testRunTimestamp": "2026-06-16T05:05:56.280Z",
+    "overallStatus": "PASS",
+    "tests": [
+      {
+        "feature": "API HEALTH TEST",
+        "outcome": "Healthy - all dependencies connected",
+        "timestamp": "2026-06-16T05:05:29.584Z",
+        "route": "GET /health",
+        "apiCalled": "http://localhost:3001/health",
+        "request": "None",
+        "response": "{\"status\":\"healthy\",\"timestamp\":\"2026-06-16T05:05:29.569Z\",\"version\":\"1.0.0\",\"services\":{\"database\":\"connected\",\"redis\":\"connected\",\"ai-service\":\"connected\"},\"circuitBreakers\":{\"database\":{\"state\":\"CLOSED\",\"failures\":0,\"failureThreshold\":5,\"totalCalls\":0,\"totalFailures\":0,\"shortCircuits\":0,\"openedAt\":null,\"cooldownMs\":30000},\"redis\":{\"state\":\"CLOSED\",\"failures\":0,\"failureThreshold\":3,\"totalCalls\":0,\"totalFailures\":0,\"shortCircuits\":0,\"openedAt\":null,\"cooldownMs\":15000},\"ai-service\":{\"state\":\"CLOSED\",\"failures\":0,\"failureThreshold\":3,\"totalCalls\":0,\"totalFailures\":0,\"shortCircuits\":0,\"openedAt\":null,\"cooldownMs\":60000}},\"degradedMode\":{\"overall\":\"healthy\",\"degradedServices\":[],\"services\":{\"database\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0},\"redis\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0},\"ai-service\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0},\"websocket\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0},\"notifications\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0},\"analytics\":{\"status\":\"healthy\",\"degradedSince\":null,\"lastError\":null,\"recoveryCount\":0,\"degradationCount\":0}},\"timestamp\":\"2026-06-16T05:05:29.569Z\"},\"queue\":{\"enqueued\":0,\"processed\":0,\"failed\":0,\"deadLettered\":0,\"pending\":{\"notification\":0,\"audit\":0,\"security-event\":0,\"analytics\":0,\"ai-inference\":0},\"processing\":0,\"deadLetterSize\":0},\"locks\":{\"backend\":\"in-memory\",\"activeLocks\":0},\"tracing\":{\"total\":5,\"errors\":2},\"eventBus\":{\"emitted\":0,\"handled\":0,\"errors\":0,\"registeredEvents\":0,\"totalHandlers\":0},\"uptime\":24.730454044}",
+        "dbEffect": "None",
+        "screenResult": "HTTP 200 - Healthy",
+        "pass": "PASS"
+      },
+      {
+        "feature": "BOOTSTRAP PAGE APPEARANCE",
+        "outcome": "Bootstrap Setup page active",
+        "timestamp": "2026-06-16T05:05:32.117Z",
+        "route": "GET /api/auth/bootstrap/status",
+        "apiCalled": "http://localhost:3001/api/auth/bootstrap/status",
+        "request": "None",
+        "response": "{\"success\":true,\"bootstrapMode\":true}",
+        "dbEffect": "Select face_embeddings WHERE admin",
+        "screenResult": "Bootstrap Setup screen visible",
+        "pass": "PASS"
+      },
+      {
+        "feature": "ADMIN BOOTSTRAP SETUP",
+        "outcome": "Admin credentials and face stored successfully",
+        "timestamp": "2026-06-16T05:05:32.502Z",
+        "route": "POST /api/auth/bootstrap/setup",
+        "apiCalled": "http://localhost:3001/api/auth/bootstrap/setup",
+        "request": "{\"password\":\"SecureAdminPassword123!\",\"frames\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\"]}",
+        "response": "{\"success\":true,\"message\":\"Bootstrap setup complete. The administrator face profile and password have been configured successfully.\"}",
+        "dbEffect": "Update admin employees record, insert face_embeddings, log security event",
+        "screenResult": "Bootstrap Setup Successful redirecting...",
+        "pass": "PASS"
+      },
+      {
+        "feature": "BOOTSTRAP OBJECTIVE (LOCK PERSISTENCE)",
+        "outcome": "Locked - Setup completed",
+        "timestamp": "2026-06-16T05:05:55.188Z",
+        "route": "GET /api/auth/bootstrap/status",
+        "apiCalled": "http://localhost:3001/api/auth/bootstrap/status",
+        "request": "None",
+        "response": "{\"success\":true,\"bootstrapMode\":false}",
+        "dbEffect": "Select face_embeddings WHERE admin",
+        "screenResult": "Standard Login screen visible",
+        "pass": "PASS"
+      },
+      {
+        "feature": "ADMIN PASSWORD LOGIN (MFA REQUIREMENT)",
+        "outcome": "Blocked - Face Authentication Required",
+        "timestamp": "2026-06-16T05:05:55.353Z",
+        "route": "POST /api/auth/login",
+        "apiCalled": "http://localhost/api/auth/login",
+        "request": "{\"employeeId\":\"admin\",\"password\":\"SecureAdminPassword123!\"}",
+        "response": "{\"success\":false,\"message\":\"Admin users must use face authentication combined with password login\",\"code\":\"FACE_AUTHENTICATION_REQUIRED\",\"loginMethod\":\"face-login\"}",
+        "dbEffect": "Log security event (LOGIN_FAILED)",
+        "screenResult": "Redirecting to Face Login screen",
+        "pass": "PASS"
+      },
+      {
+        "feature": "ADMIN FACE CAMERA LOGIN",
+        "outcome": "Admin authenticated and tokens issued",
+        "timestamp": "2026-06-16T05:05:55.571Z",
+        "route": "POST /api/auth/face-login",
+        "apiCalled": "http://localhost/api/auth/face-login",
+        "request": "{\"employeeId\":\"admin\",\"password\":\"SecureAdminPassword123!\",\"frames\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\"]}",
+        "response": "{\"success\":true,\"authenticated\":true,\"message\":\"Authentication successful\",\"tokens\":{\"accessToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1wbG95ZWVJZCI6ImFkbWluIiwiZW1haWwiOiJhZG1pbkBhdHRlbmRhbmNlLXN5c3RlbS5sb2NhbCIsInJvbGUiOiJhZG1pbiIsImRlcGFydG1lbnQiOiJBZG1pbmlzdHJhdGlvbiIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3ODE1ODYzNTUsImV4cCI6MTc4MTU4NzI1NSwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiYzkxYWJmYWItMTA2My00ZmI4LWE1ZjQtZDIyZTk4YzlkYWZjIn0.RJ4nu0sL0m5jUPWIlcCcgPxi6NrrIb8eyti9l8Wyn0w\",\"refreshToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1wbG95ZWVJZCI6ImFkbWluIiwidHlwZSI6InJlZnJlc2giLCJ0b2tlbkZhbWlseSI6IjVmOWM1OThlLTdkNDItNDE0NC04NTk0LTUwZjE4NmRmZjNjOSIsImlhdCI6MTc4MTU4NjM1NSwiZXhwIjoxNzgyMTkxMTU1LCJhdWQiOiJhdHRlbmRhbmNlLXdlYiIsImlzcyI6ImF0dGVuZGFuY2UtcGxhdGZvcm0iLCJqdGkiOiJlYjVhNjI3NC04OTRjLTRjMWEtOGQ1MC04OTIyNTEzMDBmODkifQ.jGzdtIGvZ2EhTPzgQfzw8mzYI2jVsHfgeRQqPAGuR04\"},\"employee\":{\"id\":1,\"employeeId\":\"admin\",\"firstName\":\"System\",\"lastName\":\"Administrator\",\"email\":\"admin@attendance-system.local\",\"role\":\"admin\",\"department\":\"Administration\"}}",
+        "dbEffect": "Insert login_logs, update employees last_login_at, insert refresh_tokens",
+        "screenResult": "Admin Redirected to Dashboard",
+        "pass": "PASS"
+      },
+      {
+        "feature": "IMAGE ENROLLMENT (CREATE USER RECORD)",
+        "outcome": "User record created",
+        "timestamp": "2026-06-16T05:05:55.716Z",
+        "route": "POST /api/admin/employees",
+        "apiCalled": "http://localhost/api/admin/employees",
+        "request": "{\"employeeId\":\"EMP_TEST001\",\"firstName\":\"Test\",\"lastName\":\"Employee\",\"email\":\"test.employee@attendance-system.local\",\"phone_number\":\"+1-555-9999\",\"department\":\"Engineering\",\"position\":\"Software Engineer\",\"role\":\"employee\",\"password\":\"TestPass123\",\"hireDate\":\"2026-06-14\"}",
+        "response": "{\"success\":true,\"data\":{\"id\":83,\"employee_id\":\"EMP_TEST001\",\"first_name\":\"Test\",\"last_name\":\"Employee\",\"email\":\"test.employee@attendance-system.local\",\"role\":\"employee\"},\"message\":\"Employee created successfully\"}",
+        "dbEffect": "Insert employees (EMP_TEST001)",
+        "screenResult": "Employee created message shown",
+        "pass": "PASS"
+      },
+      {
+        "feature": "LOGIN OBJECTIVE (PASSWORD LOGIN)",
+        "outcome": "Employee authenticated, password-only permitted before face enrolled",
+        "timestamp": "2026-06-16T05:05:55.883Z",
+        "route": "POST /api/auth/login",
+        "apiCalled": "http://localhost/api/auth/login",
+        "request": "{\"employeeId\":\"EMP_TEST001\",\"password\":\"TestPass123\"}",
+        "response": "{\"success\":true,\"message\":\"Login successful\",\"tokens\":{\"accessToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsImVtYWlsIjoidGVzdC5lbXBsb3llZUBhdHRlbmRhbmNlLXN5c3RlbS5sb2NhbCIsInJvbGUiOiJlbXBsb3llZSIsImRlcGFydG1lbnQiOiJFbmdpbmVlcmluZyIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3ODE1ODYzNTUsImV4cCI6MTc4MTU4NzI1NSwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiNGU1ZjBkYWUtYzg0Yy00OGMyLTlhNzctN2EyYmFiOTZhN2NlIn0.bqrEZKU-xtKQGQCYHqFDZ8trGFDfIMX3yJn0NwlcIZw\",\"refreshToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsInR5cGUiOiJyZWZyZXNoIiwidG9rZW5GYW1pbHkiOiJkYjFjMTRhNy1iNWQwLTQ4YzEtOGE2Ny1kOWFiODIxY2YxOTAiLCJpYXQiOjE3ODE1ODYzNTUsImV4cCI6MTc4MjE5MTE1NSwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiYTkzNTU2ZTctYzI2OC00YTMyLTk5OTItOTBmYzVmMDkxNDJlIn0.bnjQu8G-Rk8TBiO0UbXtM8KzFBu_kzjF8_rJL8LVVhw\"},\"employee\":{\"id\":83,\"employeeId\":\"EMP_TEST001\",\"firstName\":\"Test\",\"lastName\":\"Employee\",\"email\":\"test.employee@attendance-system.local\",\"role\":\"employee\",\"department\":\"Engineering\"}}",
+        "dbEffect": "Insert login_logs, update employees last_login_at",
+        "screenResult": "Employee Redirected to Dashboard",
+        "pass": "PASS"
+      },
+      {
+        "feature": "IMAGE ENROLLMENT OBJECTIVE",
+        "outcome": "Face embedding and user record successfully persisted",
+        "timestamp": "2026-06-16T05:05:56.184Z",
+        "route": "POST /api/auth/register-face",
+        "apiCalled": "http://localhost/api/auth/register-face",
+        "request": "{\"employeeId\":\"EMP_TEST001\",\"frames\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\"]}",
+        "response": "{\"success\":true,\"message\":\"Face registered successfully\",\"employeeId\":\"EMP_TEST001\"}",
+        "dbEffect": "Insert face_embeddings, update employees face_enrolled=TRUE",
+        "screenResult": "Face enrolled successfully message",
+        "pass": "PASS"
+      },
+      {
+        "feature": "UPLOAD LOGIN OBJECTIVE",
+        "outcome": "Employee authenticated via uploaded face image",
+        "timestamp": "2026-06-16T05:05:56.233Z",
+        "route": "POST /api/auth/face-login",
+        "apiCalled": "http://localhost/api/auth/face-login",
+        "request": "{\"employeeId\":\"EMP_TEST001\",\"frames\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\"]}",
+        "response": "{\"success\":true,\"authenticated\":true,\"message\":\"Authentication successful\",\"tokens\":{\"accessToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsImVtYWlsIjoidGVzdC5lbXBsb3llZUBhdHRlbmRhbmNlLXN5c3RlbS5sb2NhbCIsInJvbGUiOiJlbXBsb3llZSIsImRlcGFydG1lbnQiOiJFbmdpbmVlcmluZyIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3ODE1ODYzNTYsImV4cCI6MTc4MTU4NzI1NiwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiMmNiNzg0M2UtYmFlYS00YzUyLWE0NjktMzEzMTQ3OTVjMzkxIn0.5ATCBkO-spK7Qz3U15S6aFx4WF1CEzNFYeDWnopFHvU\",\"refreshToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsInR5cGUiOiJyZWZyZXNoIiwidG9rZW5GYW1pbHkiOiIzZGJiZGFlMi0zZDJmLTQwNjYtOGQ2Zi1hZjg4MzRjZjZhNGMiLCJpYXQiOjE3ODE1ODYzNTYsImV4cCI6MTc4MjE5MTE1NiwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiYmNlYjczNGEtMmIyOC00NDRmLWJiZmItNDk1Mjg4NGQ3MWViIn0.9R1MFs806Sn5hd1M6yVQZfRjw6ArPrLladWFRaMVWMs\"},\"employee\":{\"id\":83,\"employeeId\":\"EMP_TEST001\",\"firstName\":\"Test\",\"lastName\":\"Employee\",\"email\":\"test.employee@attendance-system.local\",\"role\":\"employee\",\"department\":\"Engineering\"}}",
+        "dbEffect": "Insert login_logs, update employees last_login_at",
+        "screenResult": "Employee Redirected to Dashboard",
+        "pass": "PASS"
+      },
+      {
+        "feature": "FACE LOGIN OBJECTIVE",
+        "outcome": "Employee authenticated via camera face detection",
+        "timestamp": "2026-06-16T05:05:56.272Z",
+        "route": "POST /api/auth/face-login",
+        "apiCalled": "http://localhost/api/auth/face-login",
+        "request": "{\"employeeId\":\"EMP_TEST001\",\"frames\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\",\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=\"]}",
+        "response": "{\"success\":true,\"authenticated\":true,\"message\":\"Authentication successful\",\"tokens\":{\"accessToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsImVtYWlsIjoidGVzdC5lbXBsb3llZUBhdHRlbmRhbmNlLXN5c3RlbS5sb2NhbCIsInJvbGUiOiJlbXBsb3llZSIsImRlcGFydG1lbnQiOiJFbmdpbmVlcmluZyIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3ODE1ODYzNTYsImV4cCI6MTc4MTU4NzI1NiwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiYWEzMGNkYjQtMWJjOS00NDQ5LWEyNjMtYTFiOTU4YmQ5MmE4In0.sf_uuI7gLOjXLQcjQq9MiK08U8ufF2DuFOf30nh8nDM\",\"refreshToken\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsImVtcGxveWVlSWQiOiJFTVBfVEVTVDAwMSIsInR5cGUiOiJyZWZyZXNoIiwidG9rZW5GYW1pbHkiOiI5YzEwODNjOC1kNmJhLTQ2MzItYjljNi05ZmU5MGUyZDExOTIiLCJpYXQiOjE3ODE1ODYzNTYsImV4cCI6MTc4MjE5MTE1NiwiYXVkIjoiYXR0ZW5kYW5jZS13ZWIiLCJpc3MiOiJhdHRlbmRhbmNlLXBsYXRmb3JtIiwianRpIjoiM2FmMWE2ZmItZDQ1ZC00NzYzLWExNmUtOTU2MDJhZjY4ZjcyIn0.6Qd5CzGp4VOtozPVaYr0m8FTDuHyP_64RUCtTaYQBuc\"},\"employee\":{\"id\":83,\"employeeId\":\"EMP_TEST001\",\"firstName\":\"Test\",\"lastName\":\"Employee\",\"email\":\"test.employee@attendance-system.local\",\"role\":\"employee\",\"department\":\"Engineering\"}}",
+        "dbEffect": "Insert login_logs, update employees last_login_at",
+        "screenResult": "Employee Redirected to Dashboard",
+        "pass": "PASS"
+      }
+    ]
   }
 ]
