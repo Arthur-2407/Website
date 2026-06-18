@@ -18,7 +18,44 @@ export interface Employee {
   mfa_enabled?: boolean;
   created_at: string;
   updated_at: string;
+  // Work location (from employee_locations table, if assigned)
+  work_location_name?: string | null;
+  work_location_lat?: number | null;
+  work_location_lng?: number | null;
+  work_location_radius?: number | null;
 }
+
+export interface EmployeeLocation {
+  id: number;
+  employee_id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Row returned by the bulk /employees/locations endpoint
+export interface EmployeeLocationRow {
+  id: number;
+  employee_id: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  department: string;
+  is_active: boolean;
+  // null fields mean no location assigned
+  location_id: number | null;
+  location_name: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  radius_meters: number | null;
+  location_is_active: boolean | null;
+  location_updated_at: string | null;
+}
+
 
 export interface Supervisor extends Employee {
   assigned_employees?: Employee[];
@@ -55,6 +92,9 @@ export interface CreateEmployeeData {
 export interface WorkTiming {
   id: number;
   employee_id?: number | null;
+  employee_code?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   department?: string | null;
   work_start_time: string;
   work_end_time: string;
@@ -63,6 +103,9 @@ export interface WorkTiming {
   overtime_start_time?: string | null;
   overtime_end_time?: string | null;
   is_active: boolean;
+  is_temporary?: boolean;
+  start_date?: string | null;
+  end_date?: string | null;
 }
 
 export const adminApi = {
@@ -73,20 +116,20 @@ export const adminApi = {
     department?: string;
     role?: string;
     isActive?: boolean;
-  }): Promise<AxiosResponse<{ data: Employee[]; pagination: { page: number; limit: number; total: number; pages: number } }>> => {
+  }): Promise<AxiosResponse<{ success: boolean; data: Employee[]; pagination: any }>> => {
     return api.get('/admin/employees', { params });
   },
 
-  createEmployee: async (data: CreateEmployeeData): Promise<AxiosResponse<{ success: boolean; data: Employee }>> => {
+  createEmployee: async (data: CreateEmployeeData): Promise<AxiosResponse<any>> => {
     return api.post('/admin/employees', data);
   },
 
-  updateEmployee: async (employeeId: string | number, data: Partial<CreateEmployeeData & { isActive: boolean }>): Promise<AxiosResponse<{ success: boolean; data: Employee }>> => {
-    return api.put(`/admin/employees/${employeeId}`, data);
+  updateEmployee: async (id: number, data: Partial<CreateEmployeeData> & { isActive?: boolean }): Promise<AxiosResponse<any>> => {
+    return api.put(`/admin/employees/${id}`, data);
   },
 
-  deactivateEmployee: async (employeeId: string | number): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
-    return api.delete(`/admin/employees/${employeeId}`);
+  deactivateEmployee: async (id: number): Promise<AxiosResponse<any>> => {
+    return api.delete(`/admin/employees/${id}`);
   },
 
   // Hierarchy management
@@ -130,9 +173,38 @@ export const adminApi = {
     lunchEndTime?: string;
     overtimeStartTime?: string;
     overtimeEndTime?: string;
+    isTemporary?: boolean;
+    startDate?: string | null;
+    endDate?: string | null;
   }): Promise<AxiosResponse<any>> => {
     return api.post('/admin/work-timings', data);
   },
+
+  deleteWorkTiming: async (id: number): Promise<AxiosResponse<any>> => {
+    return api.delete(`/admin/work-timings/${id}`);
+  },
+
+  // Employee location management
+  getEmployeeLocation: async (employeeId: number | string): Promise<AxiosResponse<{ success: boolean; data: EmployeeLocation | null }>> => {
+    return api.get(`/admin/employees/${employeeId}/location`);
+  },
+
+  assignEmployeeLocation: async (
+    employeeId: number | string,
+    data: { name: string; latitude: number; longitude: number; radiusMeters: number }
+  ): Promise<AxiosResponse<{ success: boolean; data: EmployeeLocation; message: string }>> => {
+    return api.post(`/admin/employees/${employeeId}/location`, data);
+  },
+
+  removeEmployeeLocation: async (employeeId: number | string): Promise<AxiosResponse<{ success: boolean; message: string }>> => {
+    return api.delete(`/admin/employees/${employeeId}/location`);
+  },
+
+  // Bulk fetch: all employees with their location status (real-time)
+  getAllEmployeeLocations: async (): Promise<AxiosResponse<{ success: boolean; data: EmployeeLocationRow[] }>> => {
+    return api.get('/admin/employees/locations');
+  },
+
 
   // Supervisor team (for supervisor role)
   getMyTeam: async (): Promise<AxiosResponse<{ success: boolean; data: TeamMember[]; count: number }>> => {

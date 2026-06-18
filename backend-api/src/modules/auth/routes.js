@@ -164,10 +164,15 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, employee_id, first_name, last_name, email, role, department, password_hash,
-              failed_login_count, locked_until, face_enrolled
-       FROM employees
-       WHERE employee_id = $1 AND is_active = TRUE`,
+      `SELECT 
+         e.id, e.employee_id, e.first_name, e.last_name, e.email, e.role, e.department, e.password_hash,
+         e.failed_login_count, e.locked_until, e.face_enrolled,
+         e.supervisor_id AS supervisor_id,
+         s.first_name AS supervisor_first_name,
+         s.last_name AS supervisor_last_name
+       FROM employees e
+       LEFT JOIN employees s ON e.supervisor_id = s.id
+       WHERE e.employee_id = $1 AND e.is_active = TRUE`,
       [employeeId]
     );
 
@@ -313,6 +318,10 @@ router.post('/login', async (req, res) => {
         role: employee.role,
         department: employee.department,
         faceEnrolled: employee.face_enrolled,
+        supervisorId: employee.supervisor_id || null,
+        supervisorName: employee.supervisor_first_name 
+          ? `${employee.supervisor_first_name} ${employee.supervisor_last_name}`
+          : null
       },
     });
   } catch (error) {
@@ -338,9 +347,15 @@ router.post('/face-login', async (req, res) => {
 
     // Fetch employee details first to perform validations
     const employeeResult = await query(
-      `SELECT id, employee_id, first_name, last_name, email, role, department, supervisor_id, password_hash, failed_login_count, locked_until, face_enrolled
-       FROM employees
-       WHERE employee_id = $1 AND is_active = TRUE`,
+      `SELECT 
+         e.id, e.employee_id, e.first_name, e.last_name, e.email, e.role, e.department, e.password_hash,
+         e.failed_login_count, e.locked_until, e.face_enrolled,
+         e.supervisor_id AS supervisor_id,
+         s.first_name AS supervisor_first_name,
+         s.last_name AS supervisor_last_name
+       FROM employees e
+       LEFT JOIN employees s ON e.supervisor_id = s.id
+       WHERE e.employee_id = $1 AND e.is_active = TRUE`,
       [employeeId]
     );
     const employee = employeeResult.rows[0];
@@ -718,6 +733,10 @@ router.post('/face-login', async (req, res) => {
           role: employee.role,
           department: employee.department,
           faceEnrolled: employee.face_enrolled,
+          supervisorId: employee.supervisor_id || null,
+          supervisorName: employee.supervisor_first_name 
+            ? `${employee.supervisor_first_name} ${employee.supervisor_last_name}`
+            : null
         },
       });
     }
@@ -784,12 +803,11 @@ router.get('/me', authenticateToken, async (req, res) => {
     const result = await query(
       `SELECT 
          e.id, e.employee_id, e.first_name, e.last_name, e.email, e.role, e.department, e.position, e.face_enrolled,
-         COALESCE(e.supervisor_id, sa.supervisor_id) AS supervisor_id,
+         e.supervisor_id AS supervisor_id,
          s.first_name AS supervisor_first_name,
          s.last_name AS supervisor_last_name
        FROM employees e
-       LEFT JOIN supervisor_assignments sa ON e.id = sa.employee_id AND sa.is_active = TRUE
-       LEFT JOIN employees s ON COALESCE(e.supervisor_id, sa.supervisor_id) = s.id
+       LEFT JOIN employees s ON e.supervisor_id = s.id
        WHERE e.id = $1 AND e.is_active = TRUE`,
       [req.user.id]
     );
@@ -868,9 +886,14 @@ router.post('/refresh', async (req, res) => {
     }
 
     const employeeResult = await query(
-      `SELECT id, employee_id, first_name, last_name, email, role, department, face_enrolled
-       FROM employees
-       WHERE id = $1 AND is_active = TRUE`,
+      `SELECT 
+         e.id, e.employee_id, e.first_name, e.last_name, e.email, e.role, e.department, e.face_enrolled,
+         e.supervisor_id AS supervisor_id,
+         s.first_name AS supervisor_first_name,
+         s.last_name AS supervisor_last_name
+       FROM employees e
+       LEFT JOIN employees s ON e.supervisor_id = s.id
+       WHERE e.id = $1 AND e.is_active = TRUE`,
       [decoded.id]
     );
 
@@ -906,6 +929,10 @@ router.post('/refresh', async (req, res) => {
         role: employee.role,
         department: employee.department,
         faceEnrolled: employee.face_enrolled,
+        supervisorId: employee.supervisor_id || null,
+        supervisorName: employee.supervisor_first_name 
+          ? `${employee.supervisor_first_name} ${employee.supervisor_last_name}`
+          : null
       },
     });
   } catch (error) {

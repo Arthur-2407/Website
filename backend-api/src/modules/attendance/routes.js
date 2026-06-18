@@ -6,6 +6,67 @@ const { logger } = require('../../config/logger');
 
 const router = express.Router();
 
+function formatInterval(interval) {
+  if (!interval) return null;
+  if (typeof interval === 'string') return interval;
+  const hours = interval.hours || 0;
+  const minutes = interval.minutes || 0;
+  const seconds = interval.seconds || 0;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * Haversine distance in METERS between two lat/lng points.
+ * Mirrors the PostgreSQL calculate_distance() function.
+ */
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Resolves geo-fence result for a given employee and coordinates.
+ * Checks employee_locations first; falls back to global check_geo_fence().
+ * Returns { within_fence, distance, office_name }
+ */
+async function resolveGeoFence(employeeId, latitude, longitude) {
+  // 1. Check for per-employee location assignment
+  const empLocResult = await query(
+    `SELECT name, latitude, longitude, radius_meters
+     FROM employee_locations
+     WHERE employee_id = $1 AND is_active = TRUE
+     LIMIT 1`,
+    [employeeId]
+  );
+
+  if (empLocResult.rows.length > 0) {
+    const loc = empLocResult.rows[0];
+    const distance = haversineDistanceMeters(latitude, longitude, loc.latitude, loc.longitude);
+    const within_fence = distance <= loc.radius_meters;
+    return { within_fence, distance, office_name: loc.name };
+  }
+
+  // 2. Fall back to global office check_geo_fence()
+  const geoFenceResult = await query(
+    `SELECT * FROM check_geo_fence($1, $2)`,
+    [latitude, longitude]
+  );
+
+  if (geoFenceResult.rows.length === 0) {
+    return null; // No office configured at all
+  }
+
+  return geoFenceResult.rows[0];
+}
+
 // Check-in endpoint
 router.post('/check-in', async (req, res) => {
   try {
@@ -23,20 +84,17 @@ router.post('/check-in', async (req, res) => {
       });
     }
 
-    // Check geo-fence status
-    const geoFenceResult = await query(
-      `SELECT * FROM check_geo_fence($1, $2)`,
-      [location.latitude, location.longitude]
-    );
+    // Resolve geo-fence: per-employee location first, then global fallback
+    const geoFenceData = await resolveGeoFence(employeeId, location.latitude, location.longitude);
 
-    if (geoFenceResult.rows.length === 0) {
+    if (!geoFenceData) {
       return res.status(400).json({
         error: 'No active office location configured',
         code: 'NO_OFFICE_CONFIG'
       });
     }
 
-    const { within_fence, distance, office_name } = geoFenceResult.rows[0];
+    const { within_fence, distance, office_name } = geoFenceData;
 
     // Atomic INSERT ... ON CONFLICT DO NOTHING using the unique partial index
     // (uix_attendance_one_open_per_employee_per_day).
@@ -146,22 +204,126 @@ router.post('/check-out', async (req, res) => {
 
     const checkinRecord = checkinResult.rows[0];
     const checkOutTime = new Date();
+
+    // Query active temporary timing for the checking-out employee on the check-in date
+    const checkInDate = new Date(checkinRecord.check_in_time);
+    const year = checkInDate.getFullYear();
+    const month = String(checkInDate.getMonth() + 1).padStart(2, '0');
+    const day = String(checkInDate.getDate()).padStart(2, '0');
+    const checkInDateStr = `${year}-${month}-${day}`;
+
+    const tempShiftResult = await query(
+      `SELECT work_start_time, work_end_time 
+       FROM work_timings
+       WHERE employee_id = $1 
+         AND is_temporary = TRUE 
+         AND is_active = TRUE
+         AND $2::date >= start_date 
+         AND $2::date <= end_date
+       LIMIT 1`,
+      [employeeId, checkInDateStr]
+    );
+
+    let shift = null;
+    if (tempShiftResult.rows.length > 0) {
+      shift = tempShiftResult.rows[0];
+    } else {
+      // Query active permanent timing
+      const permShiftResult = await query(
+        `SELECT work_start_time, work_end_time 
+         FROM work_timings
+         WHERE employee_id = $1 
+           AND is_temporary = FALSE 
+           AND is_active = TRUE
+         LIMIT 1`,
+        [employeeId]
+      );
+      if (permShiftResult.rows.length > 0) {
+        shift = permShiftResult.rows[0];
+      }
+    }
+
+    const workStartTime = shift ? shift.work_start_time : '09:00:00';
+    const workEndTime = shift ? shift.work_end_time : '18:00:00';
+
+    // Helper function to calculate overlapping milliseconds between shift and actual check-in/out
+    function calculateOverlapMs(checkIn, checkOut, startStr, endStr) {
+      const parseTime = (timeStr) => {
+        const [h, m, s] = timeStr.split(':').map(Number);
+        return { hours: h, minutes: m || 0, seconds: s || 0 };
+      };
+
+      const startT = parseTime(startStr);
+      const endT = parseTime(endStr);
+
+      const getShiftInterval = (baseDate, startT, endT) => {
+        const start = new Date(baseDate);
+        start.setHours(startT.hours, startT.minutes, startT.seconds, 0);
+
+        const end = new Date(baseDate);
+        if (endT.hours < startT.hours || (endT.hours === startT.hours && endT.minutes < startT.minutes)) {
+          // Crosses midnight
+          end.setDate(end.getDate() + 1);
+        }
+        end.setHours(endT.hours, endT.minutes, endT.seconds, 0);
+        return { start, end };
+      };
+
+      const getOverlapMs = (interval1, interval2) => {
+        const start = Math.max(interval1.start.getTime(), interval2.start.getTime());
+        const end = Math.min(interval1.end.getTime(), interval2.end.getTime());
+        return Math.max(0, end - start);
+      };
+
+      let maxOverlapMs = 0;
+
+      // Check shift starting on previous day, same day, and next day to handle cross-midnight shifts robustly
+      for (let offset = -1; offset <= 1; offset++) {
+        const baseDate = new Date(checkIn);
+        baseDate.setDate(baseDate.getDate() + offset);
+        const shiftInterval = getShiftInterval(baseDate, startT, endT);
+        const overlapMs = getOverlapMs(shiftInterval, { start: checkIn, end: checkOut });
+        if (overlapMs > maxOverlapMs) {
+          maxOverlapMs = overlapMs;
+        }
+      }
+
+      return maxOverlapMs;
+    }
+
+    const workHoursMs = calculateOverlapMs(checkinRecord.check_in_time, checkOutTime, workStartTime, workEndTime);
     
     // Calculate work hours from millisecond difference (safe for any duration)
-    const workHoursMs = checkOutTime - checkinRecord.check_in_time;
     const totalSeconds = Math.max(0, Math.floor(workHoursMs / 1000));
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     const workHours = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
-    // Update record with correct coordinate mapping (latitude=$4, longitude=$5)
+    // Resolve geo-fence for check-out location (per-employee or global fallback)
+    let checkOutWithinFence = null;
+    let checkOutDistance = null;
+    if (location && typeof location.latitude === 'number' && typeof location.longitude === 'number') {
+      try {
+        const checkOutGeo = await resolveGeoFence(employeeId, location.latitude, location.longitude);
+        if (checkOutGeo) {
+          checkOutWithinFence = checkOutGeo.within_fence;
+          checkOutDistance = checkOutGeo.distance;
+        }
+      } catch (geoErr) {
+        logger.warn('Check-out geo-fence resolution failed', { error: geoErr.message });
+      }
+    }
+
+    // Update record with check-out data including geo-fence result
     const result = await query(
       `UPDATE attendance_records 
        SET check_out_time = NOW(), 
            work_hours = $1,
            check_out_image_url = $2,
-           location = CASE WHEN $3 IS NOT NULL THEN POINT($4, $5) ELSE location END
+           location = CASE WHEN $3::boolean IS NOT NULL THEN POINT($4::double precision, $5::double precision) ELSE location END,
+           checkout_geo_fence_status = $7,
+           checkout_distance_from_office = $8
        WHERE id = $6
        RETURNING *`,
       [
@@ -170,11 +332,16 @@ router.post('/check-out', async (req, res) => {
         location ? true : null,
         location ? location.latitude : null,
         location ? location.longitude : null,
-        checkinRecord.id
+        checkinRecord.id,
+        checkOutWithinFence,
+        checkOutDistance
       ]
     );
 
     const record = result.rows[0];
+    if (record) {
+      record.work_hours = workHours;
+    }
 
     // STABILIZATION: Emit WebSocket events for realtime attendance sync
     const io = req.app.get('io');
@@ -224,6 +391,9 @@ router.get('/today', async (req, res) => {
     );
 
     const currentRecord = result.rows[0] || null;
+    if (currentRecord && currentRecord.work_hours) {
+      currentRecord.work_hours = formatInterval(currentRecord.work_hours);
+    }
     const status = currentRecord && !currentRecord.check_out_time
       ? 'checked-in'
       : 'checked-out';
@@ -243,10 +413,61 @@ router.get('/today', async (req, res) => {
   }
 });
 
+// Get current employee's work timings
+router.get('/my-timing', async (req, res) => {
+  try {
+    const employeeId = req.user.id;
+    // Check temporary timings first
+    const tempShiftResult = await query(
+      `SELECT work_start_time, work_end_time 
+       FROM work_timings
+       WHERE employee_id = $1 
+         AND is_temporary = TRUE 
+         AND is_active = TRUE
+         AND NOW()::date >= start_date 
+         AND NOW()::date <= end_date
+       LIMIT 1`,
+      [employeeId]
+    );
+
+    let shift = null;
+    if (tempShiftResult.rows.length > 0) {
+      shift = tempShiftResult.rows[0];
+    } else {
+      // Query active permanent timing
+      const permShiftResult = await query(
+        `SELECT work_start_time, work_end_time 
+         FROM work_timings
+         WHERE employee_id = $1 
+           AND is_temporary = FALSE 
+           AND is_active = TRUE
+         LIMIT 1`,
+         [employeeId]
+      );
+      if (permShiftResult.rows.length > 0) {
+        shift = permShiftResult.rows[0];
+      }
+    }
+
+    const workStartTime = shift ? shift.work_start_time : '09:00:00';
+    const workEndTime = shift ? shift.work_end_time : '18:00:00';
+
+    res.json({
+      success: true,
+      work_start_time: workStartTime,
+      work_end_time: workEndTime,
+      has_assigned_timing: shift !== null
+    });
+  } catch (error) {
+    logger.error('Failed to get employee work timings', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch work timings' });
+  }
+});
+
 // Get attendance history
 router.get('/history', async (req, res) => {
   try {
-    const { startDate, endDate, employeeId: targetEmployeeId } = req.query;
+    const { startDate, endDate, employeeId: targetEmployeeId, scope } = req.query;
     const requestingEmployeeId = req.user.id;
     const isAdmin = req.user.role === 'admin';
     const isSupervisor = req.user.role === 'supervisor';
@@ -272,7 +493,7 @@ router.get('/history', async (req, res) => {
     }
 
     let queryText = `
-      SELECT ar.*, e.employee_id, e.first_name, e.last_name, e.department
+      SELECT ar.*, e.employee_id, e.first_name, e.last_name, e.department, e.role
       FROM attendance_records ar
       JOIN employees e ON ar.employee_id = e.id
       WHERE 1=1
@@ -291,32 +512,60 @@ router.get('/history', async (req, res) => {
     if (endDate) {
       paramCount++;
       queryText += ` AND ar.check_in_time <= $${paramCount}`;
-      params.push(new Date(endDate));
+      const end = new Date(endDate);
+      if (typeof endDate === 'string' && !endDate.includes('T')) {
+        end.setUTCHours(23, 59, 59, 999);
+      }
+      params.push(end);
     }
 
     // ROLE-BASED SCOPE
-    if (isAdmin) {
-      // Admins see all records (no additional filter)
-    } else if (isSupervisor) {
-      if (targetEmployeeId) {
-        // Already validated above - supervisor is assigned to this employee
-        paramCount++;
-        queryText += ` AND e.employee_id = $${paramCount}`;
-        params.push(targetEmployeeId);
-      } else {
-        // Show only their assigned employees
-        paramCount++;
-        queryText += ` AND ar.employee_id IN (
-          SELECT employee_id FROM supervisor_assignments
-          WHERE supervisor_id = $${paramCount} AND is_active = TRUE
-        )`;
-        params.push(req.user.id);
-      }
-    } else if (isEmployee) {
-      // Regular employees only see their own records
+    if (scope === 'self') {
       paramCount++;
       queryText += ` AND ar.employee_id = $${paramCount}`;
       params.push(requestingEmployeeId);
+    } else if (scope === 'team') {
+      paramCount++;
+      queryText += ` AND ar.employee_id IN (
+        SELECT id FROM employees WHERE supervisor_id = $${paramCount} AND is_active = TRUE AND role = $${paramCount + 1}
+        UNION
+        SELECT sa.employee_id FROM supervisor_assignments sa
+        JOIN employees emp ON sa.employee_id = emp.id
+        WHERE sa.supervisor_id = $${paramCount} AND sa.is_active = TRUE AND emp.role = $${paramCount + 1}
+      )`;
+      params.push(requestingEmployeeId);
+      params.push(req.user.role === 'admin' ? 'supervisor' : 'employee');
+      paramCount++;
+    } else {
+      if (isAdmin) {
+        if (scope === 'all') {
+          // Admins see all records (no additional filter)
+        } else {
+          paramCount++;
+          queryText += ` AND ar.employee_id = $${paramCount}`;
+          params.push(requestingEmployeeId);
+        }
+      } else if (isSupervisor) {
+        if (targetEmployeeId) {
+          // Already validated above - supervisor is assigned to this employee
+          paramCount++;
+          queryText += ` AND e.employee_id = $${paramCount}`;
+          params.push(targetEmployeeId);
+        } else {
+          // Show only their assigned employees
+          paramCount++;
+          queryText += ` AND ar.employee_id IN (
+            SELECT employee_id FROM supervisor_assignments
+            WHERE supervisor_id = $${paramCount} AND is_active = TRUE
+          )`;
+          params.push(req.user.id);
+        }
+      } else if (isEmployee) {
+        // Regular employees only see their own records
+        paramCount++;
+        queryText += ` AND ar.employee_id = $${paramCount}`;
+        params.push(requestingEmployeeId);
+      }
     }
 
     queryText += ' ORDER BY ar.check_in_time DESC';
@@ -335,6 +584,13 @@ router.get('/history', async (req, res) => {
     params.push(offset);
 
     const result = await query(queryText, params);
+
+    // Format interval work_hours to HH:MM:SS string
+    result.rows.forEach(r => {
+      if (r.work_hours) {
+        r.work_hours = formatInterval(r.work_hours);
+      }
+    });
 
     // Get total count for pagination
     let countQuery = `
@@ -355,29 +611,57 @@ router.get('/history', async (req, res) => {
     if (endDate) {
       countParamCount++;
       countQuery += ` AND ar.check_in_time <= $${countParamCount}`;
-      countParams.push(new Date(endDate));
+      const end = new Date(endDate);
+      if (typeof endDate === 'string' && !endDate.includes('T')) {
+        end.setUTCHours(23, 59, 59, 999);
+      }
+      countParams.push(end);
     }
 
     // Same scope validation
-    if (isAdmin) {
-      // Admins see all
-    } else if (isSupervisor) {
-      if (targetEmployeeId) {
-        countParamCount++;
-        countQuery += ` AND e.employee_id = $${countParamCount}`;
-        countParams.push(targetEmployeeId);
-      } else {
-        countParamCount++;
-        countQuery += ` AND ar.employee_id IN (
-          SELECT employee_id FROM supervisor_assignments
-          WHERE supervisor_id = $${countParamCount} AND is_active = TRUE
-        )`;
-        countParams.push(req.user.id);
-      }
-    } else if (isEmployee) {
+    if (scope === 'self') {
       countParamCount++;
       countQuery += ` AND ar.employee_id = $${countParamCount}`;
       countParams.push(requestingEmployeeId);
+    } else if (scope === 'team') {
+      countParamCount++;
+      countQuery += ` AND ar.employee_id IN (
+        SELECT id FROM employees WHERE supervisor_id = $${countParamCount} AND is_active = TRUE AND role = $${countParamCount + 1}
+        UNION
+        SELECT sa.employee_id FROM supervisor_assignments sa
+        JOIN employees emp ON sa.employee_id = emp.id
+        WHERE sa.supervisor_id = $${countParamCount} AND sa.is_active = TRUE AND emp.role = $${countParamCount + 1}
+      )`;
+      countParams.push(requestingEmployeeId);
+      countParams.push(req.user.role === 'admin' ? 'supervisor' : 'employee');
+      countParamCount++;
+    } else {
+      if (isAdmin) {
+        if (scope === 'all') {
+          // Admins see all
+        } else {
+          countParamCount++;
+          countQuery += ` AND ar.employee_id = $${countParamCount}`;
+          countParams.push(requestingEmployeeId);
+        }
+      } else if (isSupervisor) {
+        if (targetEmployeeId) {
+          countParamCount++;
+          countQuery += ` AND e.employee_id = $${countParamCount}`;
+          countParams.push(targetEmployeeId);
+        } else {
+          countParamCount++;
+          countQuery += ` AND ar.employee_id IN (
+            SELECT employee_id FROM supervisor_assignments
+            WHERE supervisor_id = $${countParamCount} AND is_active = TRUE
+          )`;
+          countParams.push(req.user.id);
+        }
+      } else if (isEmployee) {
+        countParamCount++;
+        countQuery += ` AND ar.employee_id = $${countParamCount}`;
+        countParams.push(requestingEmployeeId);
+      }
     }
 
     const countResult = await query(countQuery, countParams);

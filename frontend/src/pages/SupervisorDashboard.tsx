@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   FaUsers, 
@@ -26,6 +26,7 @@ import { adminApi, TeamMember } from '@api/adminApi';
 import { faceManagementApi, FaceChangeRequest } from '@api/faceManagementApi';
 import { leaveApi, LeaveRequest } from '@api/leaveApi';
 import { useNotification } from '@contexts/NotificationContext';
+import { websocketService } from '@services/websocketService';
 
 interface SecurityEvent {
   id: number;
@@ -83,6 +84,9 @@ const SupervisorDashboard: React.FC = () => {
   const [rejectingLeaveId, setRejectingLeaveId] = useState<number | null>(null);
   const [leaveActionReason, setLeaveActionReason] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [showPresentModal, setShowPresentModal] = useState(false);
+  const [showPendingLeaveModal, setShowPendingLeaveModal] = useState(false);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
@@ -178,88 +182,88 @@ const SupervisorDashboard: React.FC = () => {
   };
 
   // STABILIZATION: Fetch supervisor data with AbortController and resilient parallel fetching
+  const fetchData = useCallback(async (signal?: AbortSignal, skipLoading = false) => {
+    try {
+      if (!skipLoading) setLoading(true);
+
+      // STABILIZATION: Parallel fetch with allSettled — one failure doesn't block others
+      const [securityResult, loginResult, attendanceResult, teamResult, faceRequestsResult, leaveRequestsResult] = await Promise.allSettled([
+        securityApi.getSecurityEvents(10),
+        securityApi.getLoginLogs(10),
+        attendanceApi.getHistory({
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+          limit: 25,
+          scope: 'team',
+        }),
+        adminApi.getMyTeam(),
+        faceManagementApi.getPendingRequests(),
+        leaveApi.getTeamRequests(),
+      ]);
+
+      if (signal?.aborted) return;
+
+      if (securityResult.status === 'fulfilled') {
+        setSecurityEvents(securityResult.value.data);
+      } else {
+        console.error('Security events fetch error:', securityResult.reason);
+      }
+
+      if (loginResult.status === 'fulfilled') {
+        setLoginLogs(loginResult.value.data);
+      } else {
+        console.error('Login logs fetch error:', loginResult.reason);
+      }
+
+      if (attendanceResult.status === 'fulfilled') {
+        setTeamAttendance(
+          (attendanceResult.value.data.records || []).map((record: any) => ({
+            id: record.id,
+            employee_id: record.employee_id,
+            check_in_time: record.check_in_time,
+            check_out_time: record.check_out_time,
+            geo_fence_status: record.geo_fence_status,
+            employee: {
+              employee_id: record.employee_id,
+              first_name: record.first_name,
+              last_name: record.last_name,
+              department: record.department,
+            },
+          }))
+        );
+      } else {
+        console.error('Attendance fetch error:', attendanceResult.reason);
+      }
+
+      if (teamResult.status === 'fulfilled') {
+        setTeamMembers(teamResult.value.data.data || []);
+      } else {
+        console.error('Team members fetch error:', teamResult.reason);
+      }
+
+      if (faceRequestsResult.status === 'fulfilled' && faceRequestsResult.value.data.success) {
+        setFaceRequests(faceRequestsResult.value.data.data);
+      } else {
+        console.error('Face requests fetch error:', faceRequestsResult);
+      }
+
+      if (leaveRequestsResult.status === 'fulfilled') {
+        setLeaveRequests((leaveRequestsResult.value.data || []).filter((r: LeaveRequest) => r.status === 'pending'));
+      } else {
+        console.error('Leave requests fetch error:', leaveRequestsResult.reason);
+      }
+    } catch (error: any) {
+      if (error?.name === 'CanceledError') return;
+      console.error('Supervisor data fetch error:', error);
+      showError('Failed to load supervisor dashboard data');
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [dateRange, showError]);
+
   useEffect(() => {
     const abortController = new AbortController();
-
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-
-        // STABILIZATION: Parallel fetch with allSettled — one failure doesn't block others
-        const [securityResult, loginResult, attendanceResult, teamResult, faceRequestsResult, leaveRequestsResult] = await Promise.allSettled([
-          securityApi.getSecurityEvents(10),
-          securityApi.getLoginLogs(10),
-          attendanceApi.getHistory({
-            startDate: dateRange.startDate,
-            endDate: dateRange.endDate,
-            limit: 25,
-          }),
-          adminApi.getMyTeam(),
-          faceManagementApi.getPendingRequests(),
-          leaveApi.getTeamRequests(),
-        ]);
-
-        if (abortController.signal.aborted) return;
-
-        if (securityResult.status === 'fulfilled') {
-          setSecurityEvents(securityResult.value.data);
-        } else {
-          console.error('Security events fetch error:', securityResult.reason);
-        }
-
-        if (loginResult.status === 'fulfilled') {
-          setLoginLogs(loginResult.value.data);
-        } else {
-          console.error('Login logs fetch error:', loginResult.reason);
-        }
-
-        if (attendanceResult.status === 'fulfilled') {
-          setTeamAttendance(
-            (attendanceResult.value.data.records || []).map((record: any) => ({
-              id: record.id,
-              employee_id: record.employee_id,
-              check_in_time: record.check_in_time,
-              check_out_time: record.check_out_time,
-              geo_fence_status: record.geo_fence_status,
-              employee: {
-                employee_id: record.employee_id,
-                first_name: record.first_name,
-                last_name: record.last_name,
-                department: record.department,
-              },
-            }))
-          );
-        } else {
-          console.error('Attendance fetch error:', attendanceResult.reason);
-        }
-
-        if (teamResult.status === 'fulfilled') {
-          setTeamMembers(teamResult.value.data.data || []);
-        } else {
-          console.error('Team members fetch error:', teamResult.reason);
-        }
-
-        if (faceRequestsResult.status === 'fulfilled' && faceRequestsResult.value.data.success) {
-          setFaceRequests(faceRequestsResult.value.data.data);
-        } else {
-          console.error('Face requests fetch error:', faceRequestsResult);
-        }
-
-        if (leaveRequestsResult.status === 'fulfilled') {
-          setLeaveRequests((leaveRequestsResult.value.data || []).filter((r: LeaveRequest) => r.status === 'pending'));
-        } else {
-          console.error('Leave requests fetch error:', leaveRequestsResult.reason);
-        }
-      } catch (error: any) {
-        if (error?.name === 'CanceledError') return;
-        console.error('Supervisor data fetch error:', error);
-        showError('Failed to load supervisor dashboard data');
-      } finally {
-        if (!abortController.signal.aborted) setLoading(false);
-      }
-    };
-
-    fetchData();
+    fetchData(abortController.signal);
 
     // STABILIZATION: Loading timeout — auto-resolve after 15s to prevent infinite spinner
     const loadingTimeout = setTimeout(() => {
@@ -270,8 +274,26 @@ const SupervisorDashboard: React.FC = () => {
       abortController.abort();
       clearTimeout(loadingTimeout);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps — showError is a stable context ref
-  }, [dateRange]);
+  }, [fetchData]);
+
+  // Listen for realtime updates via WebSocket
+  useEffect(() => {
+    const handleRealtimeUpdate = (data: any) => {
+      console.log('[SupervisorDashboard] WebSocket event received, re-fetching data...', data);
+      // Skip showing loading spinner to avoid UI jarring
+      fetchData(undefined, true);
+    };
+
+    websocketService.on('attendance_update', handleRealtimeUpdate);
+    websocketService.on('security_alert', handleRealtimeUpdate);
+    websocketService.on('system_notification', handleRealtimeUpdate);
+
+    return () => {
+      websocketService.off('attendance_update', handleRealtimeUpdate);
+      websocketService.off('security_alert', handleRealtimeUpdate);
+      websocketService.off('system_notification', handleRealtimeUpdate);
+    };
+  }, [fetchData]);
 
   // Get event type icon
   const getEventTypeIcon = (type: string) => {
@@ -301,6 +323,14 @@ const SupervisorDashboard: React.FC = () => {
         return 'bg-gray-100 text-gray-800';
     }
   };
+
+  // Present Today selector — filter active check-ins on current date (not checked out)
+  const presentTodayRecords = teamAttendance.filter(a => {
+    if (!a.check_in_time) return false;
+    const checkInDate = new Date(a.check_in_time).toDateString();
+    const todayDate = new Date().toDateString();
+    return checkInDate === todayDate && a.check_out_time === null;
+  });
 
   // Chart data — computed from REAL security events (no hardcoding)
   const securityEventData = [
@@ -344,7 +374,8 @@ const SupervisorDashboard: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => setShowTeamModal(true)}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-blue-100 text-blue-600">
@@ -378,7 +409,8 @@ const SupervisorDashboard: React.FC = () => {
 
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => setShowPresentModal(true)}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-green-100 text-green-600">
@@ -387,7 +419,7 @@ const SupervisorDashboard: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Present Today</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {teamAttendance.filter(a => a.check_out_time === null).length}
+                  {loading ? '...' : presentTodayRecords.length}
                 </p>
               </div>
             </div>
@@ -395,7 +427,8 @@ const SupervisorDashboard: React.FC = () => {
 
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => setShowPendingLeaveModal(true)}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-yellow-100 text-yellow-600">
@@ -404,7 +437,7 @@ const SupervisorDashboard: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Pending Leave</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {loading ? '...' : teamMembers.filter(m => m.pending_leave_status === 'pending').length}
+                  {loading ? '...' : leaveRequests.length}
                 </p>
               </div>
             </div>
@@ -871,6 +904,277 @@ const SupervisorDashboard: React.FC = () => {
           )}
         </div>
       </main>
+
+      {/* Team Members Details Modal */}
+      {showTeamModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl relative max-h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-200">
+              <h3 className="text-2xl font-bold text-gray-800">
+                Assigned Team Members ({teamMembers.length})
+              </h3>
+              <button
+                onClick={() => setShowTeamModal(false)}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-semibold focus:outline-none"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div className="overflow-y-auto my-4 flex-1">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Employee ID
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Name
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Email
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Department
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Position
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Hire Date
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {teamMembers.map((member) => (
+                    <tr key={member.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {member.employee_id}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {member.first_name} {member.last_name}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {member.email}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {member.department}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {member.position}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {new Date(member.hire_date).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={() => setShowTeamModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors font-medium text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Present Today Details Modal */}
+      {showPresentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl relative max-h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-200">
+              <h3 className="text-2xl font-bold text-gray-800">
+                Employees Present Today ({presentTodayRecords.length})
+              </h3>
+              <button
+                onClick={() => setShowPresentModal(false)}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-semibold focus:outline-none"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div className="overflow-y-auto my-4 flex-1">
+              {presentTodayRecords.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No employees are currently present.</p>
+              ) : (
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee ID
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Name
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Email
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Department
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Position
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Check-In Time
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Geo-Fence Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {presentTodayRecords.map((attendance) => {
+                      const member = teamMembers.find(m => m.employee_id === attendance.employee?.employee_id);
+                      return (
+                        <tr key={attendance.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {attendance.employee?.employee_id}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {attendance.employee?.first_name} {attendance.employee?.last_name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {member?.email || '—'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.employee?.department || '—'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {member?.position || '—'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(attendance.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.geo_fence_status ? (
+                              <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+                                Within Fence
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">
+                                Outside Fence
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={() => setShowPresentModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors font-medium text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Leave Details Modal */}
+      {showPendingLeaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl relative max-h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-200">
+              <h3 className="text-2xl font-bold text-gray-800">
+                Pending Leave Requests ({leaveRequests.length})
+              </h3>
+              <button
+                onClick={() => setShowPendingLeaveModal(false)}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-semibold focus:outline-none"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div className="overflow-y-auto my-4 flex-1">
+              {leaveRequests.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No pending leave requests.</p>
+              ) : (
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Employee ID
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Name
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Dates
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Total Days
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Reason
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Submitted On
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {leaveRequests.map((request) => (
+                      <tr key={request.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {request.employee?.employee_id}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {request.employee?.first_name} {request.employee?.last_name}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 uppercase">
+                          {request.leave_type}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {new Date(request.start_date).toLocaleDateString()} to {new Date(request.end_date).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {request.total_days} {request.total_days === 1 ? 'day' : 'days'}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
+                          {request.reason}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {new Date(request.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={() => setShowPendingLeaveModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors font-medium text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

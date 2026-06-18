@@ -11,7 +11,6 @@ import {
 import { attendanceApi } from '@api/attendanceApi';
 import { useNotification } from '@contexts/NotificationContext';
 import { locationService } from '@services/locationService';
-import { formatDistance, getGeoFenceStatusColor } from '@utils/geofenceUtils';
 import { stateReconciliationEngine } from '@services/reconciliationEngine';
 
 interface AttendanceRecord {
@@ -25,6 +24,8 @@ interface AttendanceRecord {
   } | null;
   geo_fence_status: boolean;
   distance_from_office: number | null;
+  checkout_geo_fence_status?: boolean | null;
+  checkout_distance_from_office?: number | null;
   check_in_image_url: string | null;
   check_out_image_url: string | null;
   employee?: {
@@ -57,6 +58,7 @@ const AttendancePage: React.FC = () => {
         const response = await attendanceApi.getHistory({
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
+          scope: 'self',
         });
         if (!abortController.signal.aborted) {
           setRecords(response.data.records || []);
@@ -124,11 +126,6 @@ const AttendancePage: React.FC = () => {
 
   // Handle check-in
   const handleCheckIn = async () => {
-    if (!location) {
-      showError('Location not available. Please enable location services.');
-      return;
-    }
-
     // STATE RECONCILIATION: Acquire state mutation lock for 5s to gate background updates
     stateReconciliationEngine.acquireLock('attendance', 5000);
 
@@ -138,7 +135,16 @@ const AttendancePage: React.FC = () => {
     
     try {
       setCheckInStatus('loading');
-      const response = await attendanceApi.checkIn({ location });
+      
+      // Fetch fresh, real-time coordinates on check-in button press
+      const loc = await locationService.getCurrentPosition();
+      const freshLocation = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+      };
+      setLocation(freshLocation);
+
+      const response = await attendanceApi.checkIn({ location: freshLocation });
       setCheckInStatus('checked-in');
       showSuccess('Successfully checked in!');
       setRecords((current) => [response.data.record, ...current]);
@@ -163,7 +169,21 @@ const AttendancePage: React.FC = () => {
 
     try {
       setCheckInStatus('loading');
-      const response = await attendanceApi.checkOut({ location: location || undefined });
+      
+      // Fetch fresh, real-time coordinates on check-out button press
+      let freshLocation = undefined;
+      try {
+        const loc = await locationService.getCurrentPosition();
+        freshLocation = {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+        };
+        setLocation(freshLocation);
+      } catch (locErr) {
+        console.warn('Could not retrieve current position on checkout:', locErr);
+      }
+
+      const response = await attendanceApi.checkOut({ location: freshLocation || undefined });
       setCheckInStatus('checked-out');
       showSuccess('Successfully checked out!');
       setRecords((current) =>
@@ -347,6 +367,9 @@ const AttendancePage: React.FC = () => {
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Distance
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -373,26 +396,106 @@ const AttendancePage: React.FC = () => {
                         {record.work_hours || '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {record.geo_fence_status ? (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            <FaCheckCircle className="mr-1" />
-                            Within Fence
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                            <FaTimesCircle className="mr-1" />
-                            Outside Fence
-                          </span>
-                        )}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-gray-400 font-medium w-8">In:</span>
+                            {record.geo_fence_status ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                                <FaCheckCircle className="mr-1 text-[10px]" />
+                                Within Fence
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-800">
+                                <FaTimesCircle className="mr-1 text-[10px]" />
+                                Outside Fence
+                              </span>
+                            )}
+                          </div>
+                          {record.check_out_time && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-gray-400 font-medium w-8">Out:</span>
+                              {record.checkout_geo_fence_status ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                                  <FaCheckCircle className="mr-1 text-[10px]" />
+                                  Within Fence
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-800">
+                                  <FaTimesCircle className="mr-1 text-[10px]" />
+                                  Outside Fence
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {record.distance_from_office !== null ? (
-                          <span className={`text-xs ${getGeoFenceStatusColor(record.geo_fence_status)}`}>
-                            {formatDistance(record.distance_from_office)}
-                          </span>
-                        ) : (
-                          '-'
-                        )}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-gray-400 font-medium w-8">In:</span>
+                            {record.distance_from_office !== null && record.distance_from_office !== undefined ? (
+                              record.distance_from_office <= 1000 ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                                  <FaCheckCircle className="mr-1 text-[10px]" />
+                                  Check-in at location
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-800">
+                                  <FaTimesCircle className="mr-1 text-[10px]" />
+                                  Far
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </div>
+                          {record.check_out_time && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-gray-400 font-medium w-8">Out:</span>
+                              {record.checkout_distance_from_office !== null && record.checkout_distance_from_office !== undefined ? (
+                                record.checkout_distance_from_office <= 1000 ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                                    <FaCheckCircle className="mr-1 text-[10px]" />
+                                    Check-out at location
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-800">
+                                    <FaTimesCircle className="mr-1 text-[10px]" />
+                                    Far
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-mono text-xs">
+                        <div className="space-y-1">
+                          <div>
+                            <span className="text-gray-400 mr-1 inline-block w-8">In:</span>
+                            {record.distance_from_office !== null && record.distance_from_office !== undefined ? (
+                              record.distance_from_office >= 1000
+                                ? `${(record.distance_from_office / 1000).toFixed(2)} km`
+                                : `${Math.round(record.distance_from_office)} m`
+                            ) : (
+                              '—'
+                            )}
+                          </div>
+                          {record.check_out_time && (
+                            <div>
+                              <span className="text-gray-400 mr-1 inline-block w-8">Out:</span>
+                              {record.checkout_distance_from_office !== null && record.checkout_distance_from_office !== undefined ? (
+                                record.checkout_distance_from_office >= 1000
+                                  ? `${(record.checkout_distance_from_office / 1000).toFixed(2)} km`
+                                  : `${Math.round(record.checkout_distance_from_office)} m`
+                              ) : (
+                                '—'
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                     </motion.tr>
                   ))}

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Select Location | Employee Attendance Portal</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    /* Custom Map Styling */
+    #map {
+      height: calc(100vh - 220px);
+      z-index: 10;
+    }
+    .leaflet-bar {
+      border: none !important;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1) !important;
+    }
+    .leaflet-bar a {
+      border-bottom: 1px solid #f3f4f6 !important;
+      color: #374151 !important;
+      transition: all 0.2s;
+    }
+    .leaflet-bar a:hover {
+      background-color: #f3f4f6 !important;
+      color: #111827 !important;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 flex flex-col min-h-screen text-gray-800">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm z-20">
+    <div class="flex items-center gap-3">
+      <div class="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-gray-900 leading-tight">Interactive Work Location Picker</h1>
+        <p class="text-xs text-gray-500">Search address, click map, or drag marker to set coordinates</p>
+      </div>
+    </div>
+    
+    <!-- Address Search Panel -->
+    <div class="flex items-center gap-2 max-w-md w-full">
+      <div class="relative flex-grow">
+        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+        </span>
+        <input 
+          type="text" 
+          id="search-input" 
+          placeholder="Search for office, city, landmark..." 
+          class="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 hover:bg-gray-100/50 transition-colors"
+        />
+        <!-- Loader -->
+        <span id="search-spinner" class="absolute inset-y-0 right-0 pr-3 flex items-center hidden">
+          <svg class="animate-spin h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </span>
+      </div>
+      <button 
+        id="search-btn" 
+        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+      >
+        Search
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Area: Map and Sidebar -->
+  <main class="flex-grow flex flex-col md:flex-row relative">
+    
+    <!-- Map Container -->
+    <div id="map" class="flex-grow w-full"></div>
+
+    <!-- Right/Bottom Panel for Details and Confirmation -->
+    <div class="w-full md:w-80 bg-white border-t md:border-t-0 md:border-l border-gray-200 p-6 flex flex-col justify-between gap-6 shadow-lg z-20">
+      <div class="space-y-5">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wider">Location Properties</h2>
+        
+        <!-- Address Name Input (Customizable) -->
+        <div>
+          <label for="location-name" class="block text-xs font-semibold text-gray-700 mb-1">Location Name / Address</label>
+          <textarea 
+            id="location-name" 
+            rows="3" 
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-medium"
+            placeholder="Resolving address..."
+          ></textarea>
+        </div>
+
+        <!-- Coordinates Info -->
+        <div class="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+          <div>
+            <span class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Latitude</span>
+            <span id="latitude-val" class="text-sm font-semibold text-gray-900 font-mono">0.000000</span>
+          </div>
+          <div>
+            <span class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Longitude</span>
+            <span id="longitude-val" class="text-sm font-semibold text-gray-900 font-mono">0.000000</span>
+          </div>
+        </div>
+
+        <div class="p-3 bg-amber-50 border border-amber-100 rounded-lg">
+          <p class="text-xs text-amber-800 leading-relaxed font-medium">
+            ⚠️ Tip: Drag the marker to adjust the exact pin position, then review and edit the location name to be easily recognizable.
+          </p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="space-y-3 pt-4 border-t border-gray-100">
+        <button 
+          id="confirm-btn" 
+          class="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+          </svg>
+          Confirm Location
+        </button>
+        <button 
+          id="cancel-btn" 
+          class="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-semibold transition-colors"
+        >
+          Cancel & Close
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+  
+  <script>
+    // Initial Map Coordinates - default to global office (New York / default fallback or center of user's typical locations)
+    // We can also extract initial coordinates from URL query if provided
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialLat = parseFloat(urlParams.get('lat')) || 20.136994;
+    const initialLng = parseFloat(urlParams.get('lng')) || 85.635407;
+    const initialName = urlParams.get('name') || '';
+
+    // Initialize Map
+    const map = L.map('map').setView([initialLat, initialLng], 14);
+
+    // Add CartoDB Positron tiles for a premium, clean map look
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // Initialize Draggable Marker
+    const marker = L.marker([initialLat, initialLng], {
+      draggable: true
+    }).addTo(map);
+
+    // Form inputs reference
+    const nameInput = document.getElementById('location-name');
+    const latSpan = document.getElementById('latitude-val');
+    const lngSpan = document.getElementById('longitude-val');
+    const searchInput = document.getElementById('search-input');
+    const searchBtn = document.getElementById('search-btn');
+    const searchSpinner = document.getElementById('search-spinner');
+    const confirmBtn = document.getElementById('confirm-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
+
+    // Pre-fill fields
+    if (initialName) nameInput.value = initialName;
+    updateCoordinateInputs(initialLat, initialLng);
+
+    // Reverse geocode on initial load if name is empty
+    if (!initialName) {
+      reverseGeocode(initialLat, initialLng);
+    }
+
+    // Marker Drag Handlers
+    marker.on('dragend', function (e) {
+      const position = marker.getLatLng();
+      updateCoordinateInputs(position.lat, position.lng);
+      reverseGeocode(position.lat, position.lng);
+    });
+
+    // Map Click Handlers
+    map.on('click', function (e) {
+      const position = e.latlng;
+      marker.setLatLng(position);
+      updateCoordinateInputs(position.lat, position.lng);
+      reverseGeocode(position.lat, position.lng);
+    });
+
+    // Search trigger
+    searchBtn.addEventListener('click', performSearch);
+    searchInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        performSearch();
+      }
+    });
+
+    // Search Geocoding (Address to Coordinates) using Nominatim
+    function performSearch() {
+      const query = searchInput.value.trim();
+      if (!query) return;
+
+      searchSpinner.classList.remove('hidden');
+      searchBtn.disabled = true;
+
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`)
+        .then(response => response.json())
+        .then(data => {
+          if (data && data.length > 0) {
+            const result = data[0];
+            const lat = parseFloat(result.lat);
+            const lon = parseFloat(result.lon);
+            const displayName = result.display_name;
+
+            // Set map position & marker
+            map.setView([lat, lon], 16);
+            marker.setLatLng([lat, lon]);
+            
+            // Update UI fields
+            updateCoordinateInputs(lat, lon);
+            nameInput.value = displayName;
+          } else {
+            alert('Location not found. Please try a different query or select manually.');
+          }
+        })
+        .catch(err => {
+          console.error('Geocoding error:', err);
+          alert('Error searching for location. Please check your connection.');
+        })
+        .finally(() => {
+          searchSpinner.classList.add('hidden');
+          searchBtn.disabled = false;
+        });
+    }
+
+    // Reverse Geocoding (Coordinates to Address) using Nominatim
+    function reverseGeocode(lat, lng) {
+      nameInput.value = 'Resolving address details...';
+      
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`)
+        .then(response => response.json())
+        .then(data => {
+          if (data && data.display_name) {
+            // Simplify address name for premium display, e.g. use building name + road + suburb if available
+            let cleanName = data.display_name;
+            const address = data.address;
+            if (address) {
+              const parts = [];
+              if (address.amenity || address.building || address.office) {
+                parts.push(address.amenity || address.building || address.office);
+              }
+              if (address.road) parts.push(address.road);
+              if (address.suburb || address.neighbourhood || address.city_district) {
+                parts.push(address.suburb || address.neighbourhood || address.city_district);
+              }
+              if (address.city || address.town || address.village) {
+                parts.push(address.city || address.town || address.village);
+              }
+              if (address.state) parts.push(address.state);
+              if (parts.length > 0) {
+                cleanName = parts.join(', ');
+              }
+            }
+            nameInput.value = cleanName;
+          } else {
+            nameInput.value = `Location coordinate: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          }
+        })
+        .catch(err => {
+          console.error('Reverse geocoding error:', err);
+          nameInput.value = `Location coordinate: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        });
+    }
+
+    // Update lat/long numeric text displays
+    function updateCoordinateInputs(lat, lng) {
+      latSpan.textContent = lat.toFixed(6);
+      lngSpan.textContent = lng.toFixed(6);
+    }
+
+    // Confirm button event
+    confirmBtn.addEventListener('click', function() {
+      const lat = parseFloat(latSpan.textContent);
+      const lng = parseFloat(lngSpan.textContent);
+      const name = nameInput.value.trim();
+      
+      if (isNaN(lat) || isNaN(lng)) {
+        alert('Invalid coordinates. Please select a valid point.');
+        return;
+      }
+
+      if (!name) {
+        alert('Please specify a location name.');
+        return;
+      }
+
+      // Safely send message back to the opener window
+      if (window.opener) {
+        window.opener.postMessage({
+          type: 'MAP_LOCATION_SELECTED',
+          name: name,
+          latitude: lat,
+          longitude: lng
+        }, '*');
+      }
+
+      window.close();
+    });
+
+    // Cancel and close
+    cancelBtn.addEventListener('click', function() {
+      window.close();
+    });
+  </script>
+</body>
+</html>

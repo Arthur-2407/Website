@@ -142,6 +142,14 @@ router.post('/request', async (req, res) => {
       logger.warn('Leave history submit record failed', { error: histErr.message });
     }
 
+    const io = req.app.get('io');
+    if (io) {
+      io.notifySupervisors('attendance_update', {
+        type: 'leave-request',
+        employeeId: req.user.employeeId,
+      });
+    }
+
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     logger.error('Leave request submit error', { error: error.message, userId: req.user?.id });
@@ -175,23 +183,8 @@ router.get('/team-requests', async (req, res) => {
     }
 
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 200);
-    const params = [limit];
-    let scope = '';
-
-    if (req.user.role === 'supervisor') {
-      params.push(req.user.id);
-      scope = `AND (
-        lr.supervisor_id = $2
-        OR lr.employee_id IN (
-          SELECT id FROM employees 
-          WHERE supervisor_id = $2 
-             OR EXISTS (
-               SELECT 1 FROM supervisor_assignments 
-               WHERE supervisor_id = $2 AND employee_id = employees.id AND is_active = TRUE
-             )
-        )
-      )`;
-    }
+    const roleToFilter = req.user.role === 'admin' ? 'supervisor' : 'employee';
+    const params = [limit, req.user.id, roleToFilter];
 
     const result = await query(
       `SELECT lr.*,
@@ -199,11 +192,12 @@ router.get('/team-requests', async (req, res) => {
                 'employee_id', e.employee_id,
                 'first_name', e.first_name,
                 'last_name', e.last_name,
-                'department', e.department
+                'department', e.department,
+                'role', e.role
               ) AS employee
        FROM leave_requests lr
        JOIN employees e ON e.id = lr.employee_id
-       WHERE 1=1 ${scope}
+       WHERE 1=1 AND lr.supervisor_id = $2 AND e.role = $3
        ORDER BY lr.created_at DESC
        LIMIT $1`,
       params
@@ -232,15 +226,9 @@ router.get('/request/:id', async (req, res) => {
        WHERE lr.id = $1
          AND (
            lr.employee_id = $2
-           OR $3::text = 'admin'
            OR lr.supervisor_id = $2
-           OR e.supervisor_id = $2
-           OR EXISTS (
-             SELECT 1 FROM supervisor_assignments 
-             WHERE supervisor_id = $2 AND employee_id = e.id AND is_active = TRUE
-           )
          )`,
-      [id, req.user.id, req.user.role]
+      [id, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -321,23 +309,9 @@ router.put('/request/:id/approve', async (req, res) => {
            updated_at = NOW()
        WHERE lr.id = $1
          AND lr.status = 'pending'
-         AND (
-           $3::text = 'admin' 
-           OR lr.supervisor_id = $2
-           OR EXISTS (
-             SELECT 1 FROM employees e
-             WHERE e.id = lr.employee_id
-               AND (
-                 e.supervisor_id = $2
-                 OR EXISTS (
-                   SELECT 1 FROM supervisor_assignments sa
-                   WHERE sa.supervisor_id = $2 AND sa.employee_id = e.id AND sa.is_active = TRUE
-                 )
-               )
-           )
-         )
+         AND lr.supervisor_id = $2
        RETURNING *`,
-      [id, req.user.id, req.user.role]
+      [id, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -368,6 +342,29 @@ router.put('/request/:id/approve', async (req, res) => {
       'Your leave request has been approved.',
       { leaveRequestId: id }
     );
+
+    try {
+      const empResult = await query(
+        'SELECT employee_id FROM employees WHERE id = $1',
+        [leaveRecord.employee_id]
+      );
+      const empStrId = empResult.rows[0]?.employee_id;
+      const io = req.app.get('io');
+      if (io) {
+        io.notifySupervisors('attendance_update', {
+          type: 'leave-update',
+          requestId: id,
+        });
+        if (empStrId) {
+          io.notifyEmployee(empStrId, 'attendance_update', {
+            type: 'leave-update',
+            status: 'approved',
+          });
+        }
+      }
+    } catch (wsErr) {
+      logger.warn('WebSocket notification failed for leave approval', { error: wsErr.message });
+    }
 
     await logAuditEvent({
       actorEmployeeId: req.user.employeeId,
@@ -416,23 +413,9 @@ router.put('/request/:id/reject', async (req, res) => {
            updated_at = NOW()
        WHERE lr.id = $1
          AND lr.status = 'pending'
-         AND (
-           $4::text = 'admin' 
-           OR lr.supervisor_id = $2
-           OR EXISTS (
-             SELECT 1 FROM employees e
-             WHERE e.id = lr.employee_id
-               AND (
-                 e.supervisor_id = $2
-                 OR EXISTS (
-                   SELECT 1 FROM supervisor_assignments sa
-                   WHERE sa.supervisor_id = $2 AND sa.employee_id = e.id AND sa.is_active = TRUE
-                 )
-               )
-           )
-         )
+         AND lr.supervisor_id = $2
        RETURNING *`,
-      [id, req.user.id, reason, req.user.role]
+      [id, req.user.id, reason]
     );
 
     if (result.rows.length === 0) {
@@ -463,6 +446,29 @@ router.put('/request/:id/reject', async (req, res) => {
       'Your leave request has been rejected.',
       { leaveRequestId: id, reason }
     );
+
+    try {
+      const empResult = await query(
+        'SELECT employee_id FROM employees WHERE id = $1',
+        [leaveRecord.employee_id]
+      );
+      const empStrId = empResult.rows[0]?.employee_id;
+      const io = req.app.get('io');
+      if (io) {
+        io.notifySupervisors('attendance_update', {
+          type: 'leave-update',
+          requestId: id,
+        });
+        if (empStrId) {
+          io.notifyEmployee(empStrId, 'attendance_update', {
+            type: 'leave-update',
+            status: 'rejected',
+          });
+        }
+      }
+    } catch (wsErr) {
+      logger.warn('WebSocket notification failed for leave rejection', { error: wsErr.message });
+    }
 
     await logAuditEvent({
       actorEmployeeId: req.user.employeeId,

@@ -1,21 +1,40 @@
 import { lazy, Suspense } from 'react';
-import type { ReactElement } from 'react';
+import type { ReactElement, ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import MainLayout from '@components/layout/MainLayout';
 import { ProtectedRoute } from '@components/ProtectedRoute';
 
-const LoginPage = lazy(() => import('@pages/LoginPage'));
-const DashboardPage = lazy(() => import('@pages/DashboardPage'));
-const AttendancePage = lazy(() => import('@pages/AttendancePage'));
-const LeavePage = lazy(() => import('@pages/LeavePage'));
-const ReportsPage = lazy(() => import('@pages/ReportsPage'));
-const SupervisorDashboard = lazy(() => import('@pages/SupervisorDashboard'));
-const SecurityDashboard = lazy(() => import('@pages/SecurityDashboard'));
-const SystemStatusDashboard = lazy(() => import('@pages/SystemStatusDashboard'));
-const AdminPage = lazy(() => import('@pages/AdminPage'));
-const FaceLogin = lazy(() => import('@components/FaceLogin'));
-const BootstrapSetupPage = lazy(() => import('@pages/BootstrapSetupPage'));
-const RecoveryRequestPage = lazy(() => import('@pages/RecoveryRequestPage'));
+// STABILIZATION: Safe lazy loading wrapper that catches ChunkLoadError / TypeErrors
+// caused by browser trying to fetch deleted old hash files from the server after redeployments.
+function safeLazy<T extends ComponentType<any>>(importFunc: () => Promise<{ default: T }>) {
+  return lazy(async () => {
+    try {
+      return await importFunc();
+    } catch (error) {
+      console.error('Dynamic import failed, reloading page to fetch latest version...', error);
+      const lastReload = sessionStorage.getItem('last_chunk_reload');
+      const now = Date.now();
+      if (!lastReload || now - parseInt(lastReload, 10) > 10000) {
+        sessionStorage.setItem('last_chunk_reload', String(now));
+        window.location.reload();
+      }
+      throw error;
+    }
+  });
+}
+
+const LoginPage = safeLazy(() => import('@pages/LoginPage'));
+const DashboardPage = safeLazy(() => import('@pages/DashboardPage'));
+const AttendancePage = safeLazy(() => import('@pages/AttendancePage'));
+const LeavePage = safeLazy(() => import('@pages/LeavePage'));
+const ReportsPage = safeLazy(() => import('@pages/ReportsPage'));
+const SupervisorDashboard = safeLazy(() => import('@pages/SupervisorDashboard'));
+const SecurityDashboard = safeLazy(() => import('@pages/SecurityDashboard'));
+const SystemStatusDashboard = safeLazy(() => import('@pages/SystemStatusDashboard'));
+const AdminPage = safeLazy(() => import('@pages/AdminPage'));
+const FaceLogin = safeLazy(() => import('@components/FaceLogin'));
+const BootstrapSetupPage = safeLazy(() => import('@pages/BootstrapSetupPage'));
+const RecoveryRequestPage = safeLazy(() => import('@pages/RecoveryRequestPage'));
 
 const routeFallback = (
   <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans">

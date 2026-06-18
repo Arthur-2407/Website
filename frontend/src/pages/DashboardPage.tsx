@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   FaUserClock, 
   FaCalendarAlt, 
@@ -21,10 +21,69 @@ import { websocketService } from '@services/websocketService';
 
 interface AttendanceStats {
   totalCheckins: number;
+  totalCheckouts: number;
   averageHours: string;
   geoFenceCompliance: string;
-  lateArrivals: number;
+  lateArrivals: number | string;
 }
+
+// Helper function to calculate overlap hours between attendance session and shift timing
+const calculateOverlapHours = (
+  checkInStr: string,
+  checkOutStr: string | null | undefined,
+  startStr: string,
+  endStr: string
+): number => {
+  try {
+    const checkIn = new Date(checkInStr);
+    const checkOut = checkOutStr ? new Date(checkOutStr) : new Date();
+
+    const parseTime = (timeStr: string) => {
+      const [h, m, s] = timeStr.split(':').map(Number);
+      return { hours: h, minutes: m || 0, seconds: s || 0 };
+    };
+
+    const startT = parseTime(startStr);
+    const endT = parseTime(endStr);
+
+    const getShiftInterval = (baseDate: Date, startT: any, endT: any) => {
+      const start = new Date(baseDate);
+      start.setHours(startT.hours, startT.minutes, startT.seconds, 0);
+
+      const end = new Date(baseDate);
+      if (endT.hours < startT.hours || (endT.hours === startT.hours && endT.minutes < startT.minutes)) {
+        // Crosses midnight
+        end.setDate(end.getDate() + 1);
+      }
+      end.setHours(endT.hours, endT.minutes, endT.seconds, 0);
+      return { start, end };
+    };
+
+    const getOverlapMs = (interval1: { start: Date; end: Date }, interval2: { start: Date; end: Date }) => {
+      const start = Math.max(interval1.start.getTime(), interval2.start.getTime());
+      const end = Math.min(interval1.end.getTime(), interval2.end.getTime());
+      return Math.max(0, end - start);
+    };
+
+    let maxOverlapMs = 0;
+
+    // Check shift starting on previous day, same day, and next day to handle cross-midnight shifts robustly
+    for (let offset = -1; offset <= 1; offset++) {
+      const baseDate = new Date(checkIn);
+      baseDate.setDate(baseDate.getDate() + offset);
+      const shiftInterval = getShiftInterval(baseDate, startT, endT);
+      const overlapMs = getOverlapMs(shiftInterval, { start: checkIn, end: checkOut });
+      if (overlapMs > maxOverlapMs) {
+        maxOverlapMs = overlapMs;
+      }
+    }
+
+    return maxOverlapMs / (1000 * 60 * 60);
+  } catch (err) {
+    console.error('calculateOverlapHours error:', err);
+    return 0;
+  }
+};
 
 interface SecurityEvent {
   id: number;
@@ -51,6 +110,78 @@ const DashboardPage: React.FC = () => {
   const [eventsLoading, setEventsLoading] = useState(true);
   // Weekly chart data from real attendance history
   const [weeklyChartData, setWeeklyChartData] = useState<{ day: string; hours: number }[]>([]);
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
+  const [chartDayModal, setChartDayModal] = useState<{ day: string; date: string; sessions: any[] } | null>(null);
+
+  // Interactive Stats Modal States
+  const [activeModal, setActiveModal] = useState<'checkins' | 'hours' | 'compliance' | 'late' | null>(null);
+  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+  const [myTiming, setMyTiming] = useState<{ work_start_time: string; work_end_time: string; has_assigned_timing: boolean } | null>(null);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+
+  // Helper to compute Mon-Sat bounds for a given week offset (0 = current week, 1 = 1 week ago, etc.)
+  const getWeekBounds = (offset: number) => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1) - (offset * 7);
+    const monday = new Date(now.getTime());
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+
+    const saturday = new Date(monday.getTime());
+    saturday.setDate(monday.getDate() + 5);
+    saturday.setHours(23, 59, 59, 999);
+
+    return { monday, saturday };
+  };
+
+  const formatDateShort = (date: Date) => {
+    const d = date.getDate();
+    const m = date.getMonth() + 1;
+    const y = date.getFullYear().toString().slice(-2);
+    return `${d}.${m}.${y}`;
+  };
+
+  const getWeekRangeString = (offset: number) => {
+    const { monday, saturday } = getWeekBounds(offset);
+    return `${formatDateShort(monday)} to ${formatDateShort(saturday)}`;
+  };
+
+  // Recompute weekly chart data when historyRecords or selectedWeekOffset changes
+  useEffect(() => {
+    const { monday, saturday } = getWeekBounds(selectedWeekOffset);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayHoursMap: Record<string, number> = {
+      'Mon': 0, 'Tue': 0, 'Wed': 0, 'Thu': 0, 'Fri': 0, 'Sat': 0
+    };
+
+    historyRecords.forEach((record: any) => {
+      const checkInDate = new Date(record.check_in_time);
+      if (checkInDate >= monday && checkInDate <= saturday) {
+        const dayName = dayNames[checkInDate.getDay()];
+        if (dayName !== 'Sun') {
+          let durationMs = 0;
+          if (record.check_out_time) {
+            durationMs = new Date(record.check_out_time).getTime() - checkInDate.getTime();
+          } else {
+            const isToday = checkInDate.toDateString() === new Date().toDateString();
+            if (isToday) {
+              durationMs = Math.max(0, Date.now() - checkInDate.getTime());
+            }
+          }
+          const hours = durationMs / (1000 * 60 * 60);
+          dayHoursMap[dayName] = (dayHoursMap[dayName] || 0) + hours;
+        }
+      }
+    });
+
+    const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const chartData = orderedDays.map(d => ({
+      day: d,
+      hours: parseFloat((dayHoursMap[d] || 0).toFixed(2))
+    }));
+    setWeeklyChartData(chartData);
+  }, [historyRecords, selectedWeekOffset]);
 
   // Face Enrollment States
   const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
@@ -177,51 +308,127 @@ const DashboardPage: React.FC = () => {
         }
       });
 
-    // Fetch real weekly attendance history for chart
-    const weeklyPromise = attendanceApi.getHistory({
-      startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      endDate: new Date().toISOString().split('T')[0],
-      limit: 100,
+    // Fetch full history records (limit 1000) for real-time interactive calculations
+    const fullHistoryPromise = attendanceApi.getHistory({
+      limit: 1000,
+      scope: 'self',
     })
       .then((resp) => {
         if (!signal.aborted) {
-          const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          const dayHoursMap: Record<string, number> = {};
-
-          (resp.data.records || []).forEach((record: any) => {
-            const day = dayNames[new Date(record.check_in_time).getDay()];
-            // Parse work_hours interval if available, otherwise compute from check_in/out
-            let hours = 0;
-            if (record.work_hours) {
-              // work_hours may be ISO interval like "08:30:00" or PostgreSQL interval
-              const parts = String(record.work_hours).split(':');
-              if (parts.length >= 2) {
-                hours = parseFloat(parts[0]) + parseFloat(parts[1]) / 60;
-              }
-            } else if (record.check_out_time) {
-              const diff = new Date(record.check_out_time).getTime() - new Date(record.check_in_time).getTime();
-              hours = diff / (1000 * 60 * 60);
-            }
-            // Average hours per day
-            if (!dayHoursMap[day]) dayHoursMap[day] = 0;
-            dayHoursMap[day] = Math.max(dayHoursMap[day], parseFloat(hours.toFixed(1)));
-          });
-
-          const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-          const chartData = orderedDays.map(d => ({ day: d, hours: dayHoursMap[d] || 0 }));
-          setWeeklyChartData(chartData);
+          setHistoryRecords(resp.data.records || []);
         }
       })
       .catch((err) => {
         if (err?.name !== 'CanceledError' && !signal.aborted) {
-          console.error('Weekly history fetch error:', err);
-          // Leave chart empty — show empty state
+          console.error('Full history fetch error:', err);
+        }
+      });
+
+    // Fetch employee timings
+    const timingPromise = attendanceApi.getMyTiming()
+      .then((resp) => {
+        if (!signal.aborted) {
+          setMyTiming(resp.data);
+        }
+      })
+      .catch((err) => {
+        if (err?.name !== 'CanceledError' && !signal.aborted) {
+          console.error('Timing fetch error:', err);
         }
       });
 
     // STABILIZATION: All fetches run in parallel — one failure doesn't block others
-    await Promise.allSettled([statsPromise, eventsPromise, locationPromise, todayPromise, weeklyPromise]);
+    await Promise.allSettled([
+      statsPromise,
+      eventsPromise,
+      locationPromise,
+      todayPromise,
+      fullHistoryPromise,
+      timingPromise
+    ]);
   };
+
+  // Dynamic stats recalculation hook
+  useEffect(() => {
+    if (historyRecords.length === 0) return;
+
+    // 1. Total Check-ins and outs
+    const totalCheckinsCount = historyRecords.length;
+    const totalCheckoutsCount = historyRecords.filter(r => r.check_out_time).length;
+
+    // 2. Avg. Hours/Day (Restricted to office shift work hours)
+    const startStr = myTiming?.work_start_time || '09:00:00';
+    const endStr = myTiming?.work_end_time || '18:00:00';
+    const dailyHoursMap: Record<string, number> = {};
+    historyRecords.forEach((record) => {
+      const dateKey = new Date(record.check_in_time).toLocaleDateString();
+      const hours = calculateOverlapHours(
+        record.check_in_time,
+        record.check_out_time,
+        startStr,
+        endStr
+      );
+      dailyHoursMap[dateKey] = (dailyHoursMap[dateKey] || 0) + hours;
+    });
+
+    const dates = Object.keys(dailyHoursMap);
+    const avgHours = dates.length > 0
+      ? (Object.values(dailyHoursMap).reduce((a, b) => a + b, 0) / dates.length).toFixed(1)
+      : '0';
+
+    // 3. Geo Compliance (check-in <= 500m & check-out <= 500m)
+    let totalGeoEvents = 0;
+    let compliantGeoEvents = 0;
+    historyRecords.forEach((record) => {
+      // Check-in Compliance
+      if (record.distance_from_office !== null && record.distance_from_office !== undefined) {
+        totalGeoEvents++;
+        if (record.distance_from_office <= 500) {
+          compliantGeoEvents++;
+        }
+      }
+      // Check-out Compliance
+      if (record.check_out_time && record.checkout_distance_from_office !== null && record.checkout_distance_from_office !== undefined) {
+        totalGeoEvents++;
+        if (record.checkout_distance_from_office <= 500) {
+          compliantGeoEvents++;
+        }
+      }
+    });
+
+    const geoComplianceRate = totalGeoEvents > 0
+      ? ((compliantGeoEvents / totalGeoEvents) * 100).toFixed(1)
+      : '100.0';
+
+    // 4. Late Arrivals (based on assigned work_start_time)
+    let lateArrivalsValue: number | string = 'Unassigned';
+    if (myTiming?.has_assigned_timing) {
+      const shiftStartStr = myTiming.work_start_time;
+      const [startH, startM] = shiftStartStr.split(':').map(Number);
+      let lateCount = 0;
+
+      historyRecords.forEach((record) => {
+        const checkInDate = new Date(record.check_in_time);
+        const checkInHour = checkInDate.getHours();
+        const checkInMin = checkInDate.getMinutes();
+        const checkInTimeInMins = checkInHour * 60 + checkInMin;
+        const shiftStartTimeInMins = startH * 60 + startM;
+
+        if (checkInTimeInMins > shiftStartTimeInMins) {
+          lateCount++;
+        }
+      });
+      lateArrivalsValue = lateCount;
+    }
+
+    setAttendanceStats({
+      totalCheckins: totalCheckinsCount,
+      totalCheckouts: totalCheckoutsCount,
+      averageHours: avgHours,
+      geoFenceCompliance: geoComplianceRate,
+      lateArrivals: lateArrivalsValue
+    });
+  }, [historyRecords, myTiming]);
 
   // Fetch dashboard data
   useEffect(() => {
@@ -276,17 +483,21 @@ const DashboardPage: React.FC = () => {
 
   // Handle check-in
   const handleCheckIn = async () => {
-    if (!location) {
-      showError('Location not available. Please enable location services.');
-      return;
-    }
-    
     try {
       setCheckInStatus('loading');
-      const response = await attendanceApi.checkIn({ location });
+      const loc = await locationService.getCurrentPosition();
+      const freshLocation = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+      };
+      setLocation(freshLocation);
+
+      const response = await attendanceApi.checkIn({ location: freshLocation });
       setCheckInStatus('checked-in');
       setLastCheckIn(response.data.record.check_in_time);
       showSuccess('Successfully checked in!');
+      const abortController = new AbortController();
+      fetchDashboardData(abortController.signal);
     } catch (error: any) {
       console.error('Check-in error:', error);
       showError(error.response?.data?.error || 'Check-in failed. Please try again.');
@@ -298,9 +509,23 @@ const DashboardPage: React.FC = () => {
   const handleCheckOut = async () => {
     try {
       setCheckInStatus('loading');
-      await attendanceApi.checkOut({ location: location || undefined });
+      let freshLocation = undefined;
+      try {
+        const loc = await locationService.getCurrentPosition();
+        freshLocation = {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+        };
+        setLocation(freshLocation);
+      } catch (locErr) {
+        console.warn('Could not retrieve current position on checkout:', locErr);
+      }
+
+      await attendanceApi.checkOut({ location: freshLocation || undefined });
       setCheckInStatus('checked-out');
       showSuccess('Successfully checked out!');
+      const abortController = new AbortController();
+      fetchDashboardData(abortController.signal);
     } catch (error: any) {
       console.error('Check-out error:', error);
       showError(error.response?.data?.error || 'Check-out failed. Please try again.');
@@ -311,7 +536,14 @@ const DashboardPage: React.FC = () => {
   // Chart data — weeklyChartData is built from real API attendance records
   const attendanceChartData = weeklyChartData.length > 0
     ? weeklyChartData
-    : [{ day: 'Mon', hours: 0 }, { day: 'Tue', hours: 0 }, { day: 'Wed', hours: 0 }, { day: 'Thu', hours: 0 }, { day: 'Fri', hours: 0 }];
+    : [
+        { day: 'Mon', hours: 0 },
+        { day: 'Tue', hours: 0 },
+        { day: 'Wed', hours: 0 },
+        { day: 'Thu', hours: 0 },
+        { day: 'Fri', hours: 0 },
+        { day: 'Sat', hours: 0 }
+      ];
 
   const geoCompliance = attendanceStats ? parseFloat(attendanceStats.geoFenceCompliance) || 0 : 0;
   const complianceData = [
@@ -334,7 +566,7 @@ const DashboardPage: React.FC = () => {
               <span><strong>ID:</strong> {user.employeeId}</span>
               <span className="text-gray-300">•</span>
               <span><strong>Department:</strong> {user.department}</span>
-              {user.role === 'employee' && (
+              {user.role !== 'admin' && (
                 <>
                   <span className="text-gray-300">•</span>
                   <span>
@@ -355,70 +587,85 @@ const DashboardPage: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Card 1: Total Check-ins and outs */}
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => { setActiveModal('checkins'); setExpandedDate(null); }}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer border border-transparent hover:border-blue-100 transition-colors"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-blue-100 text-blue-600">
                 <FaUserClock className="text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Check-ins</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Check-ins & Outs</p>
+                <p className="text-lg font-bold text-gray-900 mt-1">
                   {statsLoading ? '...' : (attendanceStats?.totalCheckins || 0)}
                 </p>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  {statsLoading ? '' : `Check-outs: ${attendanceStats?.totalCheckouts || 0}`}
+                </p>
+                <p className="text-[10px] text-blue-600 mt-1 hover:underline">Click to view breakdown</p>
               </div>
             </div>
           </motion.div>
 
+          {/* Card 2: Avg. Hours/Day */}
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => { setActiveModal('hours'); setExpandedDate(null); }}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer border border-transparent hover:border-green-100 transition-colors"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-green-100 text-green-600">
                 <FaCalendarAlt className="text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Avg. Hours/Day</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Avg. Hours/Day</p>
+                <p className="text-lg font-bold text-gray-900 mt-1">
                   {statsLoading ? '...' : (attendanceStats?.averageHours || '0')}h
                 </p>
+                <p className="text-[10px] text-green-600 mt-1 hover:underline">Click to view breakdown</p>
               </div>
             </div>
           </motion.div>
 
+          {/* Card 3: Geo Compliance */}
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => { setActiveModal('compliance'); setExpandedDate(null); }}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer border border-transparent hover:border-purple-100 transition-colors"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-purple-100 text-purple-600">
                 <FaMapMarkerAlt className="text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Geo Compliance</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Geo Compliance</p>
+                <p className="text-lg font-bold text-gray-900 mt-1">
                   {statsLoading ? '...' : (attendanceStats?.geoFenceCompliance || '0')}%
                 </p>
+                <p className="text-[10px] text-purple-600 mt-1 hover:underline">Click to view compliance details</p>
               </div>
             </div>
           </motion.div>
 
+          {/* Card 4: Late Arrivals */}
           <motion.div
             whileHover={{ y: -5 }}
-            className="bg-white rounded-xl shadow p-6"
+            onClick={() => { setActiveModal('late'); setExpandedDate(null); }}
+            className="bg-white rounded-xl shadow p-6 cursor-pointer border border-transparent hover:border-yellow-100 transition-colors"
           >
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-yellow-100 text-yellow-600">
                 <FaChartBar className="text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Late Arrivals</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {statsLoading ? '...' : (attendanceStats?.lateArrivals || 0)}
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Late Arrivals</p>
+                <p className="text-lg font-bold text-gray-900 mt-1">
+                  {statsLoading ? '...' : (attendanceStats?.lateArrivals ?? 'Unassigned')}
                 </p>
+                <p className="text-[10px] text-yellow-600 mt-1 hover:underline">Click to view lateness detail</p>
               </div>
             </div>
           </motion.div>
@@ -430,18 +677,83 @@ const DashboardPage: React.FC = () => {
           <div className="lg:col-span-2 space-y-8">
             {/* Attendance Chart */}
             <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">Weekly Attendance</h2>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                <h2 className="text-xl font-bold text-gray-900">Weekly Attendance</h2>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="week-select" className="text-xs font-semibold text-gray-500">Select Week:</label>
+                  <select
+                    id="week-select"
+                    value={selectedWeekOffset}
+                    onChange={(e) => setSelectedWeekOffset(Number(e.target.value))}
+                    className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-gray-50 font-medium cursor-pointer"
+                  >
+                    <option value={0}>Week 0 (Current): {getWeekRangeString(0)}</option>
+                    <option value={1}>Week -1: {getWeekRangeString(1)}</option>
+                    <option value={2}>Week -2: {getWeekRangeString(2)}</option>
+                    <option value={3}>Week -3: {getWeekRangeString(3)}</option>
+                    <option value={4}>Week -4: {getWeekRangeString(4)}</option>
+                  </select>
+                </div>
+              </div>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={attendanceChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="day" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="hours" fill="#3b82f6" />
+                  <BarChart 
+                    data={attendanceChartData}
+                    onClick={(state) => {
+                      if (state && state.activePayload && state.activePayload.length > 0) {
+                        const clickedData = state.activePayload[0].payload;
+                        const dayName = clickedData.day;
+                        const { monday } = getWeekBounds(selectedWeekOffset);
+                        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        const dayIndex = dayNames.indexOf(dayName);
+                        if (dayIndex !== -1 && dayIndex !== 0) {
+                          const targetDate = new Date(monday.getTime());
+                          targetDate.setDate(monday.getDate() + (dayIndex - 1));
+                          const targetDateStr = targetDate.toLocaleDateString();
+
+                          const sessions = historyRecords.filter((record) => {
+                            return new Date(record.check_in_time).toLocaleDateString() === targetDateStr;
+                          });
+
+                          setChartDayModal({
+                            day: dayName,
+                            date: targetDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }),
+                            sessions: sessions
+                          });
+                        }
+                      }
+                    }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                    <XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} unit="h" />
+                    <Tooltip 
+                      cursor={{ fill: '#f3f4f6', opacity: 0.5 }}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-gray-800 text-white px-3 py-1.5 rounded-lg text-xs shadow-lg font-medium">
+                              <span className="block font-semibold">{data.day}</span>
+                              <span>{data.hours.toFixed(2)} hours</span>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar 
+                      dataKey="hours" 
+                      fill="#3b82f6" 
+                      radius={[4, 4, 0, 0]} 
+                      className="cursor-pointer"
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              <p className="text-[10px] text-gray-400 mt-2 text-center">
+                Tip: Click on any bar to view the session breakdown for that day.
+              </p>
             </div>
 
             {/* Recent Security Events */}
@@ -702,6 +1014,402 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Helper calculation functions for interactive stats modals */}
+      {(() => {
+        const getGroupedCheckinsData = () => {
+          const groups: Record<string, { checkins: string[]; checkouts: string[] }> = {};
+          historyRecords.forEach((record) => {
+            const dateStr = new Date(record.check_in_time).toLocaleDateString();
+            if (!groups[dateStr]) {
+              groups[dateStr] = { checkins: [], checkouts: [] };
+            }
+            groups[dateStr].checkins.push(new Date(record.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            if (record.check_out_time) {
+              groups[dateStr].checkouts.push(new Date(record.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+            }
+          });
+          return groups;
+        };
+
+        const getDailyHoursBreakdown = () => {
+          const startStr = myTiming?.work_start_time || '09:00:00';
+          const endStr = myTiming?.work_end_time || '18:00:00';
+          const hoursMap: Record<string, number> = {};
+          historyRecords.forEach((record) => {
+            const dateStr = new Date(record.check_in_time).toLocaleDateString();
+            const hours = calculateOverlapHours(
+              record.check_in_time,
+              record.check_out_time,
+              startStr,
+              endStr
+            );
+            hoursMap[dateStr] = (hoursMap[dateStr] || 0) + hours;
+          });
+          return hoursMap;
+        };
+
+        const getGeoComplianceBreakdown = () => {
+          const complianceMap: Record<string, { checkins: { distance: number | null; compliant: boolean }[]; checkouts: { distance: number | null; compliant: boolean }[] }> = {};
+          historyRecords.forEach((record) => {
+            const dateStr = new Date(record.check_in_time).toLocaleDateString();
+            if (!complianceMap[dateStr]) {
+              complianceMap[dateStr] = { checkins: [], checkouts: [] };
+            }
+            const inDist = record.distance_from_office;
+            complianceMap[dateStr].checkins.push({
+              distance: inDist,
+              compliant: inDist !== null && inDist !== undefined && inDist <= 500
+            });
+            if (record.check_out_time) {
+              const outDist = record.checkout_distance_from_office;
+              complianceMap[dateStr].checkouts.push({
+                distance: outDist,
+                compliant: outDist !== null && outDist !== undefined && outDist <= 500
+              });
+            }
+          });
+          return complianceMap;
+        };
+
+        const getLateArrivalsBreakdown = () => {
+          if (!myTiming?.has_assigned_timing) return [];
+          const list: { date: string; checkInTime: string; shiftStart: string; minutesLate: number }[] = [];
+          const startStr = myTiming.work_start_time;
+          const [startH, startM] = startStr.split(':').map(Number);
+          historyRecords.forEach((record) => {
+            const checkInDate = new Date(record.check_in_time);
+            const checkInHour = checkInDate.getHours();
+            const checkInM = checkInDate.getMinutes();
+            const checkInTimeInMins = checkInHour * 60 + checkInM;
+            const shiftStartTimeInMins = startH * 60 + startM;
+            if (checkInTimeInMins > shiftStartTimeInMins) {
+              list.push({
+                date: new Date(record.check_in_time).toLocaleDateString(),
+                checkInTime: checkInDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                shiftStart: startStr.substring(0, 5),
+                minutesLate: checkInTimeInMins - shiftStartTimeInMins
+              });
+            }
+          });
+          return list;
+        };
+
+        return (
+          <AnimatePresence>
+            {activeModal !== null && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                {/* Backdrop overlay */}
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setActiveModal(null)}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                />
+                
+                {/* Modal Container */}
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden relative z-10 border border-gray-100"
+                >
+                  <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {activeModal === 'checkins' && 'Total Check-ins and Outs Details'}
+                      {activeModal === 'hours' && 'Average Working Hours Breakdown'}
+                      {activeModal === 'compliance' && 'Geo Compliance Details'}
+                      {activeModal === 'late' && 'Late Arrivals History'}
+                    </h3>
+                    <button
+                      onClick={() => setActiveModal(null)}
+                      className="text-gray-400 hover:text-gray-600 rounded-lg p-1.5 hover:bg-gray-100 transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-5 h-5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div className="p-6 max-h-[60vh] overflow-y-auto">
+                    {activeModal === 'checkins' && (
+                      <div className="space-y-1">
+                        {Object.keys(getGroupedCheckinsData()).length === 0 ? (
+                          <p className="text-gray-500 text-center py-4">No records found.</p>
+                        ) : (
+                          Object.keys(getGroupedCheckinsData()).map((date) => {
+                            const groupedData = getGroupedCheckinsData();
+                            const isExpanded = expandedDate === date;
+                            return (
+                              <div key={date} className="border-b border-gray-100 last:border-0 py-2">
+                                <div 
+                                  onClick={() => setExpandedDate(isExpanded ? null : date)}
+                                  className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2.5 rounded-lg transition-colors"
+                                >
+                                  <span className="font-semibold text-gray-800">{date}</span>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-xs font-medium text-gray-500">
+                                      check in {groupedData[date].checkins.length} times, check out {groupedData[date].checkouts.length} times
+                                    </span>
+                                    <span className="text-gray-400 text-xs font-mono">{isExpanded ? '▲' : '▼'}</span>
+                                  </div>
+                                </div>
+                                {isExpanded && (
+                                  <div className="mt-2 pl-4 pr-2 py-2 bg-gray-50 rounded-lg space-y-2 text-sm text-gray-600 border border-gray-100">
+                                    {groupedData[date].checkins.map((inTime, idx) => {
+                                      const outTime = groupedData[date].checkouts[idx] || '—';
+                                      return (
+                                        <div key={idx} className="flex justify-between py-1 border-b border-gray-200/50 last:border-0">
+                                          <span className="font-medium font-mono text-xs text-gray-700">#{idx + 1} Check-in: {inTime}</span>
+                                          <span className="font-medium font-mono text-xs text-gray-700">Check-out: {outTime}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+
+                    {activeModal === 'hours' && (
+                      <div className="space-y-1">
+                        {Object.keys(getDailyHoursBreakdown()).length === 0 ? (
+                          <p className="text-gray-500 text-center py-4">No records found.</p>
+                        ) : (
+                          Object.keys(getDailyHoursBreakdown()).map((date) => {
+                            const dailyHours = getDailyHoursBreakdown();
+                            return (
+                              <div key={date} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
+                                <span className="font-medium text-gray-700">{date}</span>
+                                <span className="font-semibold text-gray-900 font-mono">{dailyHours[date].toFixed(2)} hrs</span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+
+                    {activeModal === 'compliance' && (
+                      <div className="space-y-1">
+                        {Object.keys(getGeoComplianceBreakdown()).length === 0 ? (
+                          <p className="text-gray-500 text-center py-4">No records found.</p>
+                        ) : (
+                          Object.keys(getGeoComplianceBreakdown()).map((date) => {
+                            const geoData = getGeoComplianceBreakdown();
+                            const isExpanded = expandedDate === date;
+                            const dayData = geoData[date];
+                            const totalEvents = dayData.checkins.length + dayData.checkouts.length;
+                            const compliantEvents = dayData.checkins.filter(c => c.compliant).length + dayData.checkouts.filter(c => c.compliant).length;
+                            
+                            return (
+                              <div key={date} className="border-b border-gray-100 last:border-0 py-2">
+                                <div 
+                                  onClick={() => setExpandedDate(isExpanded ? null : date)}
+                                  className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2.5 rounded-lg transition-colors"
+                                >
+                                  <span className="font-semibold text-gray-800">{date}</span>
+                                  <div className="flex items-center gap-3">
+                                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${compliantEvents === totalEvents ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                      Compliance: {compliantEvents}/{totalEvents}
+                                    </span>
+                                    <span className="text-gray-400 text-xs font-mono">{isExpanded ? '▲' : '▼'}</span>
+                                  </div>
+                                </div>
+                                {isExpanded && (
+                                  <div className="mt-2 pl-4 pr-2 py-2 bg-gray-50 rounded-lg space-y-2 text-sm text-gray-600 border border-gray-100">
+                                    {dayData.checkins.map((item, idx) => (
+                                      <div key={`in-${idx}`} className="flex justify-between py-1 border-b border-gray-200/50 last:border-0">
+                                        <span className="font-medium font-mono text-xs">#{idx + 1} Check-in</span>
+                                        <span className={`font-semibold font-mono text-xs ${item.compliant ? 'text-green-600' : 'text-red-600'}`}>
+                                          {item.distance !== null && item.distance !== undefined 
+                                            ? `${item.distance >= 1000 ? `${(item.distance / 1000).toFixed(2)} km` : `${Math.round(item.distance)} m`} (${item.compliant ? 'Compliant' : 'Far (>500m)'})`
+                                            : 'No Location captured'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    {dayData.checkouts.map((item, idx) => (
+                                      <div key={`out-${idx}`} className="flex justify-between py-1 border-b border-gray-200/50 last:border-0">
+                                        <span className="font-medium font-mono text-xs">#{idx + 1} Check-out</span>
+                                        <span className={`font-semibold font-mono text-xs ${item.compliant ? 'text-green-600' : 'text-red-600'}`}>
+                                          {item.distance !== null && item.distance !== undefined 
+                                            ? `${item.distance >= 1000 ? `${(item.distance / 1000).toFixed(2)} km` : `${Math.round(item.distance)} m`} (${item.compliant ? 'Compliant' : 'Far (>500m)'})`
+                                            : 'No Location captured'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+
+                    {activeModal === 'late' && (
+                      <div>
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 mb-4">
+                          <span className="font-medium">Assigned Shift Hours:</span>{' '}
+                          {myTiming?.has_assigned_timing ? (
+                            <span className="text-blue-600 font-semibold">{myTiming.work_start_time.substring(0, 5)} - {myTiming.work_end_time.substring(0, 5)}</span>
+                          ) : (
+                            <span className="text-amber-500 italic font-semibold">Unassigned (Using default 09:00 AM - 06:00 PM)</span>
+                          )}
+                        </div>
+
+                        <div className="space-y-1">
+                          {!myTiming?.has_assigned_timing ? (
+                            <p className="text-amber-600 text-center py-4 font-semibold">Work Timing: Unassigned. No assigned work hours found.</p>
+                          ) : getLateArrivalsBreakdown().length === 0 ? (
+                            <p className="text-gray-500 text-center py-4">No late arrivals recorded!</p>
+                          ) : (
+                            getLateArrivalsBreakdown().map((item, idx) => {
+                              const hoursLate = Math.floor(item.minutesLate / 60);
+                              const minsLate = item.minutesLate % 60;
+                              const lateStr = hoursLate > 0 
+                                ? `${hoursLate} hr ${minsLate} mins` 
+                                : `${minsLate} mins`;
+                              return (
+                                <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
+                                  <div>
+                                    <span className="font-semibold text-gray-800 block">{item.date}</span>
+                                    <span className="text-xs text-gray-500 font-mono">Shift starts at {item.shiftStart} · Checked in at {item.checkInTime}</span>
+                                  </div>
+                                  <span className="text-xs font-semibold px-2.5 py-1 bg-amber-50 text-amber-700 rounded-full border border-amber-100">
+                                    Late by {lateStr}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end">
+                    <button
+                      onClick={() => setActiveModal(null)}
+                      className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+        );
+      })()}
+
+      {/* Weekly Chart Day Detail Modal */}
+      <AnimatePresence>
+        {chartDayModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setChartDayModal(null)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative z-10 border border-gray-100"
+            >
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {chartDayModal.day} ({chartDayModal.date}) Sessions
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Total of {chartDayModal.sessions.length} session(s)
+                  </p>
+                </div>
+                <button
+                  onClick={() => setChartDayModal(null)}
+                  className="text-gray-400 hover:text-gray-600 rounded-lg p-1.5 hover:bg-gray-100 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="p-6 max-h-[50vh] overflow-y-auto space-y-3">
+                {chartDayModal.sessions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">No check-in records for this day.</p>
+                ) : (
+                  chartDayModal.sessions.map((session, idx) => {
+                    const inTime = new Date(session.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const outTime = session.check_out_time 
+                      ? new Date(session.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                      : 'Active Session';
+                    
+                    let durationStr = '';
+                    if (session.check_out_time) {
+                      const diffMs = new Date(session.check_out_time).getTime() - new Date(session.check_in_time).getTime();
+                      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+                      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                      durationStr = diffHrs > 0 ? `${diffHrs}h ${diffMins}m` : `${diffMins}m`;
+                    } else {
+                      const isToday = new Date(session.check_in_time).toDateString() === new Date().toDateString();
+                      if (isToday) {
+                        const diffMs = Date.now() - new Date(session.check_in_time).getTime();
+                        const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+                        const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                        durationStr = `Active: ${diffHrs > 0 ? `${diffHrs}h ${diffMins}m` : `${diffMins}m`}`;
+                      } else {
+                        durationStr = 'Incomplete';
+                      }
+                    }
+
+                    return (
+                      <div key={idx} className="p-4 rounded-xl bg-gray-50 border border-gray-100 flex flex-col gap-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-semibold text-gray-800">Session #{idx + 1}</span>
+                          <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                            session.check_out_time 
+                              ? 'bg-green-50 text-green-700 border border-green-100' 
+                              : 'bg-blue-50 text-blue-700 border border-blue-100'
+                          }`}>
+                            {durationStr}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-xs font-mono text-gray-600">
+                          <div>
+                            <span className="text-gray-400 block uppercase tracking-wider text-[10px]">Check In</span>
+                            <span className="text-gray-800 font-semibold">{inTime}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400 block uppercase tracking-wider text-[10px]">Check Out</span>
+                            <span className="text-gray-800 font-semibold">{outTime}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end">
+                <button
+                  onClick={() => setChartDayModal(null)}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

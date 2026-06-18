@@ -1,35 +1,14 @@
-# Multi-stage build for production
-FROM node:20-alpine AS builder
-
-# Set working directory
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci
-
-# Copy source code
-COPY . .
-
-# Build application
-RUN npm run build
-
 # Production stage
 FROM nginx:alpine AS production
 
 # Install curl for health check
 RUN apk add --no-cache curl
 
-# Copy built application from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy built application from host
+COPY dist /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
-
-
-
 
 # Expose port
 EXPOSE 80

@@ -23,8 +23,9 @@ import {
   FaExclamationTriangle,
   FaCheckCircle,
   FaKey,
+  FaMapMarkerAlt,
 } from 'react-icons/fa';
-import { adminApi, Employee, Supervisor, WorkTiming } from '@api/adminApi';
+import { adminApi, Employee, Supervisor, WorkTiming, EmployeeLocation, EmployeeLocationRow } from '@api/adminApi';
 import { faceManagementApi, FaceChangeRequest, FaceAuditLog } from '@api/faceManagementApi';
 import { leaveApi, LeaveRequest } from '@api/leaveApi';
 import FaceCamera from '@components/camera/FaceCamera';
@@ -713,12 +714,99 @@ const AdminPage: React.FC = () => {
   const { user } = useAuth();
   const { showSuccess, showError } = useNotification();
 
+  useEffect(() => {
+    const handleMapMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'MAP_LOCATION_SELECTED') {
+        const { name, latitude, longitude } = event.data;
+        if (name) setLocationName(name);
+        if (latitude) setLocationLat(String(latitude));
+        if (longitude) setLocationLng(String(longitude));
+      }
+    };
+    window.addEventListener('message', handleMapMessage);
+    return () => {
+      window.removeEventListener('message', handleMapMessage);
+    };
+  }, []);
+
   // Data state
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
   const [unassignedEmployees, setUnassignedEmployees] = useState<Employee[]>([]);
   const [workTimings, setWorkTimings] = useState<WorkTiming[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Timing configuration modal states
+  const [isAssignTimingModalOpen, setIsAssignTimingModalOpen] = useState(false);
+  const [timingModalType, setTimingModalType] = useState<'permanent' | 'temporary'>('permanent');
+  const [selectedEmployeeIdForTiming, setSelectedEmployeeIdForTiming] = useState<string>('');
+  const [timingWorkStart, setTimingWorkStart] = useState('09:00');
+  const [timingWorkEnd, setTimingWorkEnd] = useState('18:00');
+  const [timingLunchStart, setTimingLunchStart] = useState('12:00');
+  const [timingLunchEnd, setTimingLunchEnd] = useState('13:00');
+  const [timingStartDate, setTimingStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [timingEndDate, setTimingEndDate] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+  const [timingSubmitting, setTimingSubmitting] = useState(false);
+
+  const handleAssignWorkTiming = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployeeIdForTiming) {
+      showError('Please select an employee');
+      return;
+    }
+    if (!timingWorkStart || !timingWorkEnd) {
+      showError('Work start and end times are required');
+      return;
+    }
+    if (timingModalType === 'temporary' && (!timingStartDate || !timingEndDate)) {
+      showError('Start and end dates are required for temporary work timings');
+      return;
+    }
+
+    setTimingSubmitting(true);
+    try {
+      const payload = {
+        employeeId: parseInt(selectedEmployeeIdForTiming, 10),
+        workStartTime: timingWorkStart.includes(':') && timingWorkStart.split(':').length === 2 ? `${timingWorkStart}:00` : timingWorkStart,
+        workEndTime: timingWorkEnd.includes(':') && timingWorkEnd.split(':').length === 2 ? `${timingWorkEnd}:00` : timingWorkEnd,
+        lunchStartTime: timingLunchStart ? (timingLunchStart.includes(':') && timingLunchStart.split(':').length === 2 ? `${timingLunchStart}:00` : timingLunchStart) : undefined,
+        lunchEndTime: timingLunchEnd ? (timingLunchEnd.includes(':') && timingLunchEnd.split(':').length === 2 ? `${timingLunchEnd}:00` : timingLunchEnd) : undefined,
+        isTemporary: timingModalType === 'temporary',
+        startDate: timingModalType === 'temporary' ? timingStartDate : null,
+        endDate: timingModalType === 'temporary' ? timingEndDate : null
+      };
+
+      const response = await adminApi.createWorkTiming(payload);
+      if (response.status === 201 || response.data.success) {
+        showSuccess(`Successfully assigned ${timingModalType} work timing`);
+        setIsAssignTimingModalOpen(false);
+        // Refresh work timings
+        const updatedTimings = await adminApi.getWorkTimings();
+        setWorkTimings(updatedTimings.data.data || []);
+      }
+    } catch (err: any) {
+      console.error(err);
+      showError(err.response?.data?.error || 'Failed to assign work timing');
+    } finally {
+      setTimingSubmitting(false);
+    }
+  };
+
+  const handleDeleteWorkTiming = async (id: number) => {
+    if (!window.confirm('Are you sure you want to remove this work timing configuration?')) return;
+    try {
+      const response = await adminApi.deleteWorkTiming(id);
+      if (response.status === 200 || response.data.success) {
+        showSuccess('Successfully deleted work timing configuration');
+        // Refresh work timings
+        const updatedTimings = await adminApi.getWorkTimings();
+        setWorkTimings(updatedTimings.data.data || []);
+      }
+    } catch (err: any) {
+      console.error(err);
+      showError(err.response?.data?.error || 'Failed to delete work timing configuration');
+    }
+  };
 
   // Direct Face Management State
   const [selectedEmpForFace, setSelectedEmpForFace] = useState<Employee | null>(null);
@@ -787,6 +875,37 @@ const AdminPage: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
 
+  // Location Assignment Modal States
+  const [selectedEmpForLocation, setSelectedEmpForLocation] = useState<Employee | null>(null);
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState<EmployeeLocation | null>(null);
+  const [locationName, setLocationName] = useState('');
+  const [locationLat, setLocationLat] = useState('');
+  const [locationLng, setLocationLng] = useState('');
+  const [locationRadius, setLocationRadius] = useState('500');
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationFetching, setLocationFetching] = useState(false);
+
+  // Bulk location rows: keyed by employee numeric id for O(1) lookup in table
+  const [employeeLocationRows, setEmployeeLocationRows] = useState<Record<number, EmployeeLocationRow>>({}); 
+  const [locationRowsLoading, setLocationRowsLoading] = useState(false);
+
+  // Fetch ALL employee locations from bulk endpoint — call after tab switch & after mutations
+  const fetchAllLocations = async () => {
+    setLocationRowsLoading(true);
+    try {
+      const res = await adminApi.getAllEmployeeLocations();
+      const rows = res.data.data || [];
+      const map: Record<number, EmployeeLocationRow> = {};
+      rows.forEach((row) => { map[row.id] = row; });
+      setEmployeeLocationRows(map);
+    } catch (err) {
+      console.error('Failed to load employee locations:', err);
+    } finally {
+      setLocationRowsLoading(false);
+    }
+  };
+
   const handleUpdatePassword = async () => {
     if (!selectedEmpForPassword) return;
     if (!newPassword || newPassword.trim() === '') {
@@ -812,6 +931,83 @@ const AdminPage: React.FC = () => {
       showError(err.response?.data?.error || 'Failed to update password');
     } finally {
       setPasswordLoading(false);
+    }
+  };
+
+  const openLocationModal = async (emp: Employee) => {
+    setSelectedEmpForLocation(emp);
+    setLocationName('');
+    setLocationLat('');
+    setLocationLng('');
+    setLocationRadius('500');
+    setCurrentLocation(null);
+    setIsLocationModalOpen(true);
+    setLocationFetching(true);
+    try {
+      const res = await adminApi.getEmployeeLocation(emp.id);
+      if (res.data.data) {
+        const loc = res.data.data;
+        setCurrentLocation(loc);
+        setLocationName(loc.name);
+        setLocationLat(String(loc.latitude));
+        setLocationLng(String(loc.longitude));
+        setLocationRadius(String(loc.radius_meters));
+      }
+    } catch (err) {
+      console.error('Failed to fetch employee location:', err);
+    } finally {
+      setLocationFetching(false);
+    }
+  };
+
+  const handleAssignLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmpForLocation) return;
+    const lat = parseFloat(locationLat);
+    const lng = parseFloat(locationLng);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      showError('Please enter valid latitude (-90 to 90) and longitude (-180 to 180) values');
+      return;
+    }
+    if (!locationName.trim()) {
+      showError('Location name is required');
+      return;
+    }
+    setLocationLoading(true);
+    try {
+      await adminApi.assignEmployeeLocation(selectedEmpForLocation.id, {
+        name: locationName.trim(),
+        latitude: lat,
+        longitude: lng,
+        radiusMeters: parseInt(locationRadius, 10) || 500,
+      });
+      showSuccess(`Work location assigned to ${selectedEmpForLocation.first_name} ${selectedEmpForLocation.last_name}`);
+      setIsLocationModalOpen(false);
+      setSelectedEmpForLocation(null);
+      fetchData();
+      fetchAllLocations(); // refresh real-time location table
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Failed to assign location');
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  const handleRemoveLocation = async () => {
+    if (!selectedEmpForLocation) return;
+    if (!window.confirm(`Remove work location for ${selectedEmpForLocation.first_name} ${selectedEmpForLocation.last_name}? They will fall back to the global office location.`)) return;
+    setLocationLoading(true);
+    try {
+      await adminApi.removeEmployeeLocation(selectedEmpForLocation.id);
+      showSuccess('Work location removed successfully');
+      setIsLocationModalOpen(false);
+      setSelectedEmpForLocation(null);
+      fetchData();
+      fetchAllLocations(); // refresh real-time location table
+    } catch (err: any) {
+      showError(err.response?.data?.error || 'Failed to remove location');
+    } finally {
+      setLocationLoading(false);
     }
   };
 
@@ -995,6 +1191,7 @@ const AdminPage: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    fetchAllLocations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1420,6 +1617,13 @@ const AdminPage: React.FC = () => {
                                   {emp.employee_id !== 'admin' && (
                                     <>
                                       <button
+                                        onClick={() => openLocationModal(emp)}
+                                        className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors"
+                                        title="Assign work location"
+                                      >
+                                        <FaMapMarkerAlt className="text-sm" />
+                                      </button>
+                                      <button
                                         onClick={() => {
                                           setSelectedEmpForPassword(emp);
                                           setNewPassword('');
@@ -1516,53 +1720,244 @@ const AdminPage: React.FC = () => {
 
             {/* ── WORK TIMINGS TAB ── */}
             {activeTab === 'timings' && (
-              <div className="space-y-5">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-semibold text-gray-900">Work Timings Configuration</h2>
+              <div className="space-y-8">
+                {/* Permanent Timings Section */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-900">Work Timings Configuration</h2>
+                      <p className="text-sm text-gray-500">Configure permanent working hours for employees and supervisors.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setTimingModalType('permanent');
+                        setSelectedEmployeeIdForTiming('');
+                        setTimingWorkStart('09:00');
+                        setTimingWorkEnd('18:00');
+                        setTimingLunchStart('12:00');
+                        setTimingLunchEnd('13:00');
+                        setIsAssignTimingModalOpen(true);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 shadow"
+                    >
+                      <FaClock />
+                      Assign Permanent Shift
+                    </button>
+                  </div>
+
+                  {workTimings.filter(t => !t.is_temporary).length === 0 ? (
+                    <div className="border-2 border-dashed border-gray-200 rounded-xl p-12 text-center">
+                      <FaClock className="mx-auto text-4xl text-gray-300 mb-3" />
+                      <p className="text-gray-900 font-semibold text-base">No work timings configured.</p>
+                      <p className="text-sm text-gray-500 mt-1">The system will use default 9:00 AM - 6:00 PM schedule.</p>
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Hours</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lunch Break</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {workTimings.filter(t => !t.is_temporary).map(timing => (
+                            <tr key={timing.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                {timing.first_name ? (
+                                  <div>
+                                    <p className="font-semibold">{timing.first_name} {timing.last_name}</p>
+                                    <p className="text-xs text-gray-500 font-mono">{timing.employee_code}</p>
+                                  </div>
+                                ) : (
+                                  timing.employee_id ? `Employee #${timing.employee_id}` : timing.department || 'Default (All)'
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700 font-mono">
+                                {timing.work_start_time} – {timing.work_end_time}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700 font-mono">
+                                {timing.lunch_start_time && timing.lunch_end_time
+                                  ? `${timing.lunch_start_time} – ${timing.lunch_end_time}`
+                                  : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <button
+                                  onClick={() => handleDeleteWorkTiming(timing.id)}
+                                  className="text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                                >
+                                  <FaTrash /> Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
-                {workTimings.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-                    <FaClock className="mx-auto text-4xl text-gray-300 mb-3" />
-                    <p className="text-gray-500">No work timings configured.</p>
-                    <p className="text-sm text-gray-400 mt-1">The system will use default 9:00 AM - 6:00 PM schedule.</p>
+                {/* Temporary Timings Section */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-900">Temporary Work Timings</h2>
+                      <p className="text-sm text-gray-500">Configure temporary work timings with active date ranges.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setTimingModalType('temporary');
+                        setSelectedEmployeeIdForTiming('');
+                        setTimingWorkStart('09:00');
+                        setTimingWorkEnd('18:00');
+                        setTimingLunchStart('12:00');
+                        setTimingLunchEnd('13:00');
+                        setTimingStartDate(new Date().toISOString().split('T')[0]);
+                        setTimingEndDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+                        setIsAssignTimingModalOpen(true);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 shadow"
+                    >
+                      <FaClock />
+                      Assign Temporary Shift
+                    </button>
                   </div>
-                ) : (
-                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Scope</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Start</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work End</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lunch Break</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {workTimings.map(timing => (
-                          <tr key={timing.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-3 text-sm text-gray-900">
-                              {timing.employee_id ? `Employee #${timing.employee_id}` : timing.department || 'Default (All)'}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 font-mono">{timing.work_start_time}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 font-mono">{timing.work_end_time}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">
-                              {timing.lunch_start_time && timing.lunch_end_time
-                                ? `${timing.lunch_start_time} – ${timing.lunch_end_time}`
-                                : '—'}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${timing.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
-                                {timing.is_active ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
+
+                  {workTimings.filter(t => t.is_temporary).length === 0 ? (
+                    <div className="border-2 border-dashed border-gray-200 rounded-xl p-12 text-center">
+                      <FaClock className="mx-auto text-4xl text-gray-300 mb-3" />
+                      <p className="text-gray-900 font-semibold text-base">No temporary work timings configured.</p>
+                      <p className="text-sm text-gray-500 mt-1">Standard permanent shifts or default schedule will be used.</p>
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Range</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Hours</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lunch Break</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {workTimings.filter(t => t.is_temporary).map(timing => (
+                            <tr key={timing.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                {timing.first_name ? (
+                                  <div>
+                                    <p className="font-semibold">{timing.first_name} {timing.last_name}</p>
+                                    <p className="text-xs text-gray-500 font-mono">{timing.employee_code}</p>
+                                  </div>
+                                ) : (
+                                  timing.employee_id ? `Employee #${timing.employee_id}` : timing.department || 'Default (All)'
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                <span className="px-2.5 py-1 text-xs font-medium bg-purple-50 text-purple-700 rounded-full border border-purple-100">
+                                  {timing.start_date ? new Date(timing.start_date).toLocaleDateString() : ''} – {timing.end_date ? new Date(timing.end_date).toLocaleDateString() : ''}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700 font-mono">
+                                {timing.work_start_time} – {timing.work_end_time}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700 font-mono">
+                                {timing.lunch_start_time && timing.lunch_end_time
+                                  ? `${timing.lunch_start_time} – ${timing.lunch_end_time}`
+                                  : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <button
+                                  onClick={() => handleDeleteWorkTiming(timing.id)}
+                                  className="text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                                >
+                                  <FaTrash /> Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Location Assignment Overview Section */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-900">Employee Work Location Assignment</h2>
+                      <p className="text-sm text-gray-500">Assign individual GPS work locations to employees and supervisors. These locations override the global office geo-fence during attendance check-in/check-out.</p>
+                    </div>
+                    {locationRowsLoading && (
+                      <div className="text-xs text-blue-500 flex items-center gap-1">
+                        <div className="h-3 w-3 rounded-full border border-blue-300 border-t-blue-500 animate-spin" />
+                        <span>Updating...</span>
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {employees.filter(e => e.employee_id !== 'admin').length === 0 ? (
+                    <div className="border-2 border-dashed border-gray-200 rounded-xl p-12 text-center">
+                      <FaMapMarkerAlt className="mx-auto text-4xl text-gray-300 mb-3" />
+                      <p className="text-gray-900 font-semibold text-base">No employees found.</p>
+                      <p className="text-sm text-gray-500 mt-1">Add employees first to assign work locations.</p>
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned Location</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {employees.filter(e => e.employee_id !== 'admin').map(emp => (
+                            <tr key={emp.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                <div>
+                                  <p className="font-semibold">{emp.first_name} {emp.last_name}</p>
+                                  <p className="text-xs text-gray-500 font-mono">{emp.employee_id}</p>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                <RoleBadge role={emp.role} />
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-700">
+                                {employeeLocationRows[emp.id] ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                                    <FaMapMarkerAlt className="text-green-500" />
+                                    {employeeLocationRows[emp.id].location_name}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                                    <FaMapMarkerAlt className="text-gray-400" />
+                                    Global Office (Default)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <button
+                                  onClick={() => openLocationModal(emp)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                                >
+                                  <FaMapMarkerAlt />
+                                  Assign Location
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2454,6 +2849,387 @@ const AdminPage: React.FC = () => {
                     )}
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── ASSIGN WORK TIMING MODAL ── */}
+      <AnimatePresence>
+        {isAssignTimingModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) setIsAssignTimingModalOpen(false); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <FaClock className="text-blue-600" />
+                  Assign {timingModalType === 'permanent' ? 'Permanent' : 'Temporary'} Work Timing
+                </h3>
+                <button
+                  onClick={() => setIsAssignTimingModalOpen(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+
+              <form onSubmit={handleAssignWorkTiming} className="p-6 space-y-4">
+                <div>
+                  <label htmlFor="timing-employee-select" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                    Select Employee/Supervisor *
+                  </label>
+                  <select
+                    id="timing-employee-select"
+                    value={selectedEmployeeIdForTiming}
+                    onChange={(e) => setSelectedEmployeeIdForTiming(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                    required
+                  >
+                    <option value="">-- Choose Employee --</option>
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.first_name} {emp.last_name} ({emp.employee_id} - {emp.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="timing-work-start" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                      Work Start *
+                    </label>
+                    <input
+                      id="timing-work-start"
+                      type="time"
+                      value={timingWorkStart}
+                      onChange={(e) => setTimingWorkStart(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="timing-work-end" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                      Work End *
+                    </label>
+                    <input
+                      id="timing-work-end"
+                      type="time"
+                      value={timingWorkEnd}
+                      onChange={(e) => setTimingWorkEnd(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="timing-lunch-start" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                      Lunch Start
+                    </label>
+                    <input
+                      id="timing-lunch-start"
+                      type="time"
+                      value={timingLunchStart}
+                      onChange={(e) => setTimingLunchStart(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="timing-lunch-end" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                      Lunch End
+                    </label>
+                    <input
+                      id="timing-lunch-end"
+                      type="time"
+                      value={timingLunchEnd}
+                      onChange={(e) => setTimingLunchEnd(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                    />
+                  </div>
+                </div>
+
+                {timingModalType === 'temporary' && (
+                  <div className="grid grid-cols-2 gap-4 p-3 bg-purple-50/50 rounded-xl border border-purple-100">
+                    <div>
+                      <label htmlFor="timing-start-date" className="block text-xs font-semibold text-purple-700 uppercase tracking-wider mb-1">
+                        Start Date *
+                      </label>
+                      <input
+                        id="timing-start-date"
+                        type="date"
+                        value={timingStartDate}
+                        onChange={(e) => setTimingStartDate(e.target.value)}
+                        className="w-full text-sm border border-purple-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="timing-end-date" className="block text-xs font-semibold text-purple-700 uppercase tracking-wider mb-1">
+                        End Date *
+                      </label>
+                      <input
+                        id="timing-end-date"
+                        type="date"
+                        value={timingEndDate}
+                        onChange={(e) => setTimingEndDate(e.target.value)}
+                        className="w-full text-sm border border-purple-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white"
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsAssignTimingModalOpen(false)}
+                    className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={timingSubmitting}
+                    className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {timingSubmitting ? (
+                      <>
+                        <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        Assigning...
+                      </>
+                    ) : (
+                      'Confirm Assignment'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── ASSIGN LOCATION MODAL ── */}
+      <AnimatePresence>
+        {isLocationModalOpen && selectedEmpForLocation && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={(e) => { if (e.target === e.currentTarget) { setIsLocationModalOpen(false); setSelectedEmpForLocation(null); } }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+            >
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-green-50 to-emerald-50">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <FaMapMarkerAlt className="text-green-600" />
+                  Assign Work Location
+                </h3>
+                <button
+                  onClick={() => { setIsLocationModalOpen(false); setSelectedEmpForLocation(null); }}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white/60"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {/* Employee Info */}
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="font-semibold text-gray-900">{selectedEmpForLocation.first_name} {selectedEmpForLocation.last_name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">ID: {selectedEmpForLocation.employee_id} · {selectedEmpForLocation.department} · {selectedEmpForLocation.role}</p>
+                </div>
+
+                {/* Current location status */}
+                {locationFetching ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="h-4 w-4 rounded-full border-2 border-gray-300 border-t-blue-500 animate-spin" />
+                    Loading current location...
+                  </div>
+                ) : currentLocation ? (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-xs font-semibold text-green-700 uppercase tracking-wider mb-1">Currently Assigned Location</p>
+                    <p className="text-sm font-medium text-green-900">{currentLocation.name}</p>
+                    <p className="text-xs text-green-700 font-mono mt-0.5">
+                      {currentLocation.latitude.toFixed(6)}, {currentLocation.longitude.toFixed(6)} · Radius: {currentLocation.radius_meters}m
+                    </p>
+                    <a
+                      href={`https://maps.google.com/maps?q=${currentLocation.latitude},${currentLocation.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1"
+                    >
+                      <FaMapMarkerAlt className="text-xs" /> View on Google Maps
+                    </a>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-0.5">No Personal Location Assigned</p>
+                    <p className="text-xs text-amber-600">This employee uses the global office geo-fence. Assign a personal location below.</p>
+                  </div>
+                )}
+
+                {/* Google Maps hint */}
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">📍 How to get coordinates</p>
+                  <p className="text-xs text-blue-600">1. Open <a href="https://maps.google.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Maps</a> and navigate to the work location.</p>
+                  <p className="text-xs text-blue-600">2. Right-click the exact point → click the coordinates shown.</p>
+                  <p className="text-xs text-blue-600">3. Paste the latitude and longitude values in the fields below.</p>
+                </div>
+
+                <form onSubmit={handleAssignLocation} className="space-y-4">
+                  <div>
+                    <label htmlFor="loc-name" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">Location Name *</label>
+                    <input
+                      id="loc-name"
+                      type="text"
+                      value={locationName}
+                      onChange={(e) => setLocationName(e.target.value)}
+                      placeholder="e.g. Head Office, Branch Office, Site A"
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">Coordinates</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const lat = locationLat || '20.136994';
+                        const lng = locationLng || '85.635407';
+                        const name = encodeURIComponent(locationName || '');
+                        const width = 950;
+                        const height = 650;
+                        const left = (window.screen.width - width) / 2;
+                        const top = (window.screen.height - height) / 2;
+                        window.open(
+                          `/map-picker.html?lat=${lat}&lng=${lng}&name=${name}`,
+                          'MapPicker',
+                          `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes`
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-semibold transition-colors py-1 px-2 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-100"
+                    >
+                      <FaMapMarkerAlt className="text-xs" />
+                      Select on Google Maps
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="loc-lat" className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Latitude *</label>
+                      <input
+                        id="loc-lat"
+                        type="number"
+                        step="any"
+                        value={locationLat}
+                        onChange={(e) => setLocationLat(e.target.value)}
+                        placeholder="e.g. 20.136994"
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white font-mono"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="loc-lng" className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Longitude *</label>
+                      <input
+                        id="loc-lng"
+                        type="number"
+                        step="any"
+                        value={locationLng}
+                        onChange={(e) => setLocationLng(e.target.value)}
+                        placeholder="e.g. 85.635407"
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white font-mono"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="loc-radius" className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">Geo-Fence Radius (meters)</label>
+                    <input
+                      id="loc-radius"
+                      type="number"
+                      min="10"
+                      max="5000"
+                      value={locationRadius}
+                      onChange={(e) => setLocationRadius(e.target.value)}
+                      placeholder="100"
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Employees within this radius of the assigned location will be marked as "Within Fence". Default: 100m.</p>
+                  </div>
+
+                  {/* Live preview of Google Maps link */}
+                  {locationLat && locationLng && !isNaN(parseFloat(locationLat)) && !isNaN(parseFloat(locationLng)) && (
+                    <div className="p-2 bg-gray-50 rounded-lg border border-gray-200">
+                      <a
+                        href={`https://maps.google.com/maps?q=${locationLat},${locationLng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:underline font-medium"
+                      >
+                        <FaMapMarkerAlt /> Verify on Google Maps: {parseFloat(locationLat).toFixed(6)}, {parseFloat(locationLng).toFixed(6)}
+                      </a>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between gap-3 pt-4 border-t border-gray-100">
+                    <div>
+                      {currentLocation && (
+                        <button
+                          type="button"
+                          onClick={handleRemoveLocation}
+                          disabled={locationLoading}
+                          className="px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          <FaTrash className="text-xs" />
+                          Remove Location
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => { setIsLocationModalOpen(false); setSelectedEmpForLocation(null); }}
+                        className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={locationLoading || locationFetching}
+                        className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {locationLoading ? (
+                          <>
+                            <div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>{currentLocation ? 'Update Location' : 'Assign Location'}</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </form>
               </div>
             </motion.div>
           </motion.div>

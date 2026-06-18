@@ -26,6 +26,15 @@ const { logAuditEvent } = require('../security-monitoring/securityLogger');
 
 const router = express.Router();
 
+function formatInterval(interval) {
+  if (!interval) return null;
+  if (typeof interval === 'string') return interval;
+  const hours = interval.hours || 0;
+  const minutes = interval.minutes || 0;
+  const seconds = interval.seconds || 0;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 // ============================================================================
 // EMPLOYEE MANAGEMENT
 // ============================================================================
@@ -466,6 +475,210 @@ router.delete('/employees/:employeeId', requireRole('admin'), async (req, res) =
 });
 
 // ============================================================================
+// EMPLOYEE LOCATION MANAGEMENT
+// ============================================================================
+
+/**
+ * GET /api/admin/employees/locations
+ * Bulk fetch: all employees with their assigned location (or null if unassigned)
+ * Returns real-time data — new employees appear automatically as unassigned
+ * Admin only
+ */
+router.get('/employees/locations', requireRole('admin'), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT
+         e.id,
+         e.employee_id,
+         e.first_name,
+         e.last_name,
+         e.role,
+         e.department,
+         e.is_active,
+         el.id             AS location_id,
+         el.name           AS location_name,
+         el.latitude,
+         el.longitude,
+         el.radius_meters,
+         el.is_active      AS location_is_active,
+         el.updated_at     AS location_updated_at
+       FROM employees e
+       LEFT JOIN employee_locations el
+         ON el.employee_id = e.id AND el.is_active = TRUE
+       WHERE e.employee_id != 'admin'
+       ORDER BY e.first_name, e.last_name`
+    );
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error) {
+    logger.error('Bulk employee locations error', { error: error.message, userId: req.user?.id });
+    res.status(500).json({ error: 'Failed to fetch employee locations' });
+  }
+});
+
+/**
+ * GET /api/admin/employees/:employeeId/location
+ * Get the assigned work location for a specific employee
+ * Admin only
+ */
+router.get('/employees/:employeeId/location', requireRole('admin'), async (req, res) => {
+
+  try {
+    const { employeeId } = req.params;
+
+    const empResult = await query(
+      'SELECT id FROM employees WHERE id = $1 OR employee_id = $2',
+      [isNaN(employeeId) ? null : parseInt(employeeId, 10), employeeId]
+    );
+
+    if (empResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const empId = empResult.rows[0].id;
+
+    const locResult = await query(
+      `SELECT id, employee_id, name, latitude, longitude, radius_meters, is_active, created_at, updated_at
+       FROM employee_locations
+       WHERE employee_id = $1 AND is_active = TRUE
+       LIMIT 1`,
+      [empId]
+    );
+
+    res.json({
+      success: true,
+      data: locResult.rows[0] || null
+    });
+  } catch (error) {
+    logger.error('Get employee location error', { error: error.message, userId: req.user?.id });
+    res.status(500).json({ error: 'Failed to fetch employee location' });
+  }
+});
+
+/**
+ * POST /api/admin/employees/:employeeId/location
+ * Assign or update a work location for a specific employee
+ * Body: { name, latitude, longitude, radiusMeters }
+ * Admin only
+ */
+router.post('/employees/:employeeId/location', requireRole('admin'), async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { name, latitude, longitude, radiusMeters } = req.body;
+
+    // Validate required fields
+    if (latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ error: 'latitude and longitude are required' });
+    }
+
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Invalid latitude or longitude values' });
+    }
+
+    const empResult = await query(
+      'SELECT id, employee_id, first_name, last_name FROM employees WHERE id = $1 OR employee_id = $2',
+      [isNaN(employeeId) ? null : parseInt(employeeId, 10), employeeId]
+    );
+
+    if (empResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const empId = empResult.rows[0].id;
+    const locationName = name || `Work Location - ${empResult.rows[0].first_name} ${empResult.rows[0].last_name}`;
+    const radius = parseInt(radiusMeters, 10) || 500;
+
+
+    // Upsert — insert or update if employee_id already exists
+    const result = await query(
+      `INSERT INTO employee_locations (employee_id, name, latitude, longitude, radius_meters, is_active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, TRUE, NOW())
+       ON CONFLICT (employee_id) DO UPDATE
+         SET name = EXCLUDED.name,
+             latitude = EXCLUDED.latitude,
+             longitude = EXCLUDED.longitude,
+             radius_meters = EXCLUDED.radius_meters,
+             is_active = TRUE,
+             updated_at = NOW()
+       RETURNING *`,
+      [empId, locationName, lat, lng, radius]
+    );
+
+    // Log audit event
+    await logAuditEvent({
+      actorEmployeeId: req.user.employeeId,
+      action: 'employee.location.assign',
+      resourceType: 'employee_location',
+      resourceId: String(empId),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      details: { employeeId: empResult.rows[0].employee_id, latitude: lat, longitude: lng, radius }
+    });
+
+    res.json({
+      success: true,
+      data: result.rows[0],
+      message: 'Work location assigned successfully'
+    });
+  } catch (error) {
+    logger.error('Assign employee location error', { error: error.message, userId: req.user?.id });
+    res.status(500).json({ error: 'Failed to assign employee location' });
+  }
+});
+
+/**
+ * DELETE /api/admin/employees/:employeeId/location
+ * Remove the assigned work location for an employee (fall back to global office)
+ * Admin only
+ */
+router.delete('/employees/:employeeId/location', requireRole('admin'), async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+
+    const empResult = await query(
+      'SELECT id, employee_id FROM employees WHERE id = $1 OR employee_id = $2',
+      [isNaN(employeeId) ? null : parseInt(employeeId, 10), employeeId]
+    );
+
+    if (empResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const empId = empResult.rows[0].id;
+
+    await query(
+      'UPDATE employee_locations SET is_active = FALSE, updated_at = NOW() WHERE employee_id = $1',
+      [empId]
+    );
+
+    // Log audit event
+    await logAuditEvent({
+      actorEmployeeId: req.user.employeeId,
+      action: 'employee.location.remove',
+      resourceType: 'employee_location',
+      resourceId: String(empId),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      details: { employeeId: empResult.rows[0].employee_id }
+    });
+
+    res.json({
+      success: true,
+      message: 'Work location removed. Employee will use global office location.'
+    });
+  } catch (error) {
+    logger.error('Remove employee location error', { error: error.message, userId: req.user?.id });
+    res.status(500).json({ error: 'Failed to remove employee location' });
+  }
+});
+
+// ============================================================================
 // SUPERVISOR ASSIGNMENT MANAGEMENT
 // ============================================================================
 
@@ -584,9 +797,16 @@ router.delete('/supervisors/:supervisorId/employees/:employeeId', requireRole('a
 
     await query(
       `UPDATE supervisor_assignments
-       SET is_active = FALSE
+       SET is_active = FALSE, unassigned_at = NOW(), unassigned_by = $3
        WHERE supervisor_id = $1 AND employee_id = $2`,
-      [supervisorId, employeeId]
+      [supervisorId, employeeId, req.user.id]
+    );
+
+    await query(
+      `UPDATE employees
+       SET supervisor_id = NULL
+       WHERE id = $1`,
+      [employeeId]
     );
 
     // Log audit event
@@ -817,11 +1037,14 @@ router.delete('/departments/:departmentId', requireRole('admin'), async (req, re
 router.get('/work-timings', requireRole('supervisor'), async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, employee_id, department, work_start_time, work_end_time,
-              lunch_start_time, lunch_end_time, is_active
-       FROM work_timings
-       WHERE is_active = TRUE
-       ORDER BY department, employee_id`
+      `SELECT wt.id, wt.employee_id, e.employee_id AS employee_code, e.first_name, e.last_name,
+              wt.department, wt.work_start_time, wt.work_end_time,
+              wt.lunch_start_time, wt.lunch_end_time, wt.is_active,
+              wt.is_temporary, wt.start_date, wt.end_date
+       FROM work_timings wt
+       LEFT JOIN employees e ON wt.employee_id = e.id
+       WHERE wt.is_active = TRUE
+       ORDER BY wt.department, e.employee_id`
     );
 
     res.json({
@@ -841,17 +1064,66 @@ router.get('/work-timings', requireRole('supervisor'), async (req, res) => {
  */
 router.post('/work-timings', requireRole('admin'), async (req, res) => {
   try {
-    const { employeeId, department, workStartTime, workEndTime, lunchStartTime, lunchEndTime } = req.body;
+    const {
+      employeeId,
+      department,
+      workStartTime,
+      workEndTime,
+      lunchStartTime,
+      lunchEndTime,
+      isTemporary = false,
+      startDate = null,
+      endDate = null
+    } = req.body;
 
     if (!workStartTime || !workEndTime) {
       return res.status(400).json({ error: 'Work start and end times are required' });
     }
 
+    if (isTemporary && (!startDate || !endDate)) {
+      return res.status(400).json({ error: 'Start and end dates are required for temporary timings' });
+    }
+
+    // Deactivate conflicting timings for the target employee
+    if (employeeId) {
+      if (isTemporary) {
+        // Deactivate overlapping temporary timings for this employee
+        await query(
+          `UPDATE work_timings
+           SET is_active = FALSE
+           WHERE employee_id = $1 AND is_temporary = TRUE AND is_active = TRUE
+             AND (start_date <= $3 AND end_date >= $2)`,
+          [employeeId, startDate, endDate]
+        );
+      } else {
+        // Deactivate existing permanent timings for this employee
+        await query(
+          `UPDATE work_timings
+           SET is_active = FALSE
+           WHERE employee_id = $1 AND is_temporary = FALSE AND is_active = TRUE`,
+          [employeeId]
+        );
+      }
+    }
+
     const result = await query(
-      `INSERT INTO work_timings (employee_id, department, work_start_time, work_end_time, lunch_start_time, lunch_end_time)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, employee_id, department, work_start_time, work_end_time`,
-      [employeeId || null, department || null, workStartTime, workEndTime, lunchStartTime || null, lunchEndTime || null]
+      `INSERT INTO work_timings (
+        employee_id, department, work_start_time, work_end_time,
+        lunch_start_time, lunch_end_time, is_temporary, start_date, end_date
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, employee_id, department, work_start_time, work_end_time, is_temporary, start_date, end_date`,
+      [
+        employeeId || null,
+        department || null,
+        workStartTime,
+        workEndTime,
+        lunchStartTime || null,
+        lunchEndTime || null,
+        isTemporary,
+        isTemporary ? startDate : null,
+        isTemporary ? endDate : null
+      ]
     );
 
     // Log audit event
@@ -862,7 +1134,7 @@ router.post('/work-timings', requireRole('admin'), async (req, res) => {
       resourceId: String(result.rows[0].id),
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
-      details: { workStartTime, workEndTime }
+      details: { workStartTime, workEndTime, isTemporary, startDate, endDate }
     });
 
     res.status(201).json({
@@ -872,6 +1144,47 @@ router.post('/work-timings', requireRole('admin'), async (req, res) => {
   } catch (error) {
     logger.error('Work timing create error', { error: error.message, userId: req.user?.id });
     res.status(500).json({ error: 'Failed to create work timing' });
+  }
+});
+
+/**
+ * DELETE /api/admin/work-timings/:id
+ * Delete work timing configuration (hard delete)
+ * Admin only
+ */
+router.delete('/work-timings/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      'DELETE FROM work_timings WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Work timing not found' });
+    }
+
+    const deletedTiming = result.rows[0];
+
+    // Log audit event
+    await logAuditEvent({
+      actorEmployeeId: req.user.employeeId,
+      action: 'work-timing.delete',
+      resourceType: 'work_timing',
+      resourceId: String(id),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      details: { deletedTiming }
+    });
+
+    res.json({
+      success: true,
+      message: 'Work timing deleted successfully'
+    });
+  } catch (error) {
+    logger.error('Work timing delete error', { error: error.message, userId: req.user?.id });
+    res.status(500).json({ error: 'Failed to delete work timing' });
   }
 });
 
@@ -952,10 +1265,11 @@ router.get('/hierarchy', requireRole('admin'), async (req, res) => {
 router.get('/supervisor/team', requireRole('supervisor'), async (req, res) => {
   try {
     const supervisorId = req.user.id;
+    const userRole = req.user.role;
 
-    const result = await query(
-      `SELECT e.id, e.employee_id, e.first_name, e.last_name, e.email,
-              e.phone_number, e.department, e.position, e.hire_date, e.is_active,
+    let queryText = `
+      SELECT e.id, e.employee_id, e.first_name, e.last_name, e.email,
+              e.phone_number, e.department, e.position, e.hire_date, e.is_active, e.role,
               (SELECT COUNT(*) FROM attendance_records 
                WHERE employee_id = e.id AND check_in_time::DATE = CURRENT_DATE) AS checked_in_today,
               (SELECT status FROM leave_requests 
@@ -965,9 +1279,19 @@ router.get('/supervisor/team', requireRole('supervisor'), async (req, res) => {
          SELECT 1 FROM supervisor_assignments sa 
          WHERE sa.supervisor_id = $1 AND sa.employee_id = e.id AND sa.is_active = TRUE
        )) AND e.is_active = TRUE
-       ORDER BY e.first_name, e.last_name`,
-      [supervisorId]
-    );
+    `;
+
+    const params = [supervisorId];
+
+    if (userRole === 'admin') {
+      queryText += ` AND e.role = 'supervisor'`;
+    } else if (userRole === 'supervisor') {
+      queryText += ` AND e.role = 'employee'`;
+    }
+
+    queryText += ` ORDER BY e.first_name, e.last_name`;
+
+    const result = await query(queryText, params);
 
     res.json({
       success: true,
@@ -1026,6 +1350,13 @@ router.get('/supervisor/team/:employeeId/attendance', requireRole('supervisor'),
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       params
     );
+
+    // Format interval work_hours to HH:MM:SS string
+    result.rows.forEach(r => {
+      if (r.work_hours) {
+        r.work_hours = formatInterval(r.work_hours);
+      }
+    });
 
     res.json({
       success: true,

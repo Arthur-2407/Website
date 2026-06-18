@@ -23,6 +23,7 @@ export interface AttendanceHistoryParams {
   employeeId?: string;
   limit?: number;
   page?: number;
+  scope?: string;
 }
 
 export interface EmployeeInfo {
@@ -44,6 +45,8 @@ export interface AttendanceRecord {
   } | null;
   geo_fence_status: boolean;
   distance_from_office: number | null;
+  checkout_geo_fence_status?: boolean | null;
+  checkout_distance_from_office?: number | null;
   check_in_image_url: string | null;
   check_out_image_url: string | null;
   notes: string | null;
@@ -89,6 +92,11 @@ export const attendanceApi = {
 
   getStats: async (period: string = 'month'): Promise<AxiosResponse<AttendanceStats>> => {
     const response = await api.get(`/attendance/stats?period=${period}`);
+    return response;
+  },
+
+  getMyTiming: async (): Promise<AxiosResponse<{ success: boolean; work_start_time: string; work_end_time: string; has_assigned_timing: boolean }>> => {
+    const response = await api.get('/attendance/my-timing');
     return response;
   },
 };

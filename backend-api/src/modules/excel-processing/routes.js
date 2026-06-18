@@ -374,7 +374,6 @@ router.post('/upload', authenticateToken, requireRole('admin'), async (req, res)
 router.get('/employees', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const { department, role: filterRole } = req.query;
-
     let queryText = `
       SELECT
         e.employee_id,

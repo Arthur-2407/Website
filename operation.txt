@@ -1,0 +1,15 @@
+# Complete command sequence to safely build, stop, and start all backend and frontend services for deployment
+
+# 1. Compile the frontend production assets locally
+cd frontend
+npm run build
+cd ..
+
+# 2. Stop and remove existing running containers
+docker-compose -f docker-compose.prod.yml down
+
+# 3. Build images and start all backend and frontend services in background (detached mode)
+docker-compose -f docker-compose.prod.yml up -d --build
+
+# 4. (Optional) Check status of all started services
+docker-compose -f docker-compose.prod.yml ps

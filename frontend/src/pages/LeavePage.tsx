@@ -6,7 +6,8 @@ import {
   FaNotesMedical, 
   FaUserFriends,
   FaPaperPlane,
-  FaHistory
+  FaHistory,
+  FaCheckCircle
 } from 'react-icons/fa';
 import { leaveApi } from '@api/leaveApi';
 import { useNotification } from '@contexts/NotificationContext';
@@ -273,7 +274,7 @@ const LeavePage: React.FC = () => {
             >
               <div className="flex items-center">
                 <div className="p-3 rounded-full bg-green-100 text-green-600">
-                  <FaPlaneDeparture className="text-xl" />
+                  <FaCheckCircle className="text-xl" />
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Approved</p>
@@ -302,8 +303,8 @@ const LeavePage: React.FC = () => {
               className="bg-white rounded-xl shadow p-6"
             >
               <div className="flex items-center">
-                <div className="p-3 rounded-full bg-red-100 text-red-600">
-                  <FaNotesMedical className="text-xl" />
+                <div className="p-3 rounded-full bg-teal-100 text-teal-600">
+                  <FaPlaneDeparture className="text-xl" />
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Vacation Days</p>
@@ -317,8 +318,8 @@ const LeavePage: React.FC = () => {
               className="bg-white rounded-xl shadow p-6"
             >
               <div className="flex items-center">
-                <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-                  <FaUserFriends className="text-xl" />
+                <div className="p-3 rounded-full bg-red-100 text-red-600">
+                  <FaNotesMedical className="text-xl" />
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-600">Sick Days</p>
