@@ -109,8 +109,22 @@ async function getAuthTokenFor(employeeIdStr, password) {
   return resp.body.tokens?.accessToken || null;
 }
 
+let originalAdminEmbedding = null;
+
 beforeAll(async () => {
   await connectRedis();
+
+  // Temporarily deactivate production admin embedding to avoid test collisions
+  try {
+    const adminRes = await faceQuery("SELECT embedding_vector FROM face_embeddings WHERE employee_id = 1 AND is_active = TRUE");
+    if (adminRes.rows.length > 0) {
+      originalAdminEmbedding = adminRes.rows[0];
+      await faceQuery("UPDATE face_embeddings SET is_active = FALSE WHERE employee_id = 1");
+    }
+  } catch (e) {
+    console.error("Failed to backup admin embedding:", e);
+  }
+
   // Create test employees
   testEmployeeId = await createTestEmployee({
     employeeIdStr: 'test-face-emp',
@@ -158,6 +172,16 @@ afterAll(async () => {
   } catch (err) {
     console.error('Teardown error:', err);
   }
+
+  // Restore original admin embedding
+  if (originalAdminEmbedding) {
+    try {
+      await faceQuery("UPDATE face_embeddings SET is_active = TRUE WHERE employee_id = 1");
+    } catch (e) {
+      console.error("Failed to restore admin embedding:", e);
+    }
+  }
+
   await disconnectRedis().catch(() => {});
   await pool.end();
 });
