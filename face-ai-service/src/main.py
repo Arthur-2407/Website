@@ -494,28 +494,44 @@ class FaceAuthenticationPipeline:
             # Step 4: Anti-Spoof Detection
             spoof_start = time.time()
             spoof_result = spoof_detector.detect_spoof(faces_detected)
-            
+
             spoof_detection_disabled = os.getenv("FACE_AI_DISABLE_SPOOF_DETECTION", "false").lower() == "true"
-            
+
+            # Always propagate full spoof telemetry into result so the
+            # backend-api can persist spoof_confidence and detection_type
+            # to security_events / login_logs tables on EVERY authentication
+            # attempt — not only when a spoof is detected.
+            result["spoof_confidence"] = spoof_result.get("spoof_confidence", 0.0)
+            result["detection_type"]   = spoof_result.get("detection_type", "NONE")
+            result["individual_scores"] = spoof_result.get("individual_scores", {})
+            result["triggered_methods"] = spoof_result.get("triggered_methods", [])
+
             if spoof_result["spoof_confidence"] > self.config["spoof_threshold"]:
-                # Log spoof attempt details
+                # Log spoof attempt details (full individual scores for forensics)
                 self.logger.warning(
-                    f"Spoof attempt detected for employee {employee_id}: "
-                    f"confidence={spoof_result['spoof_confidence']:.2f}, "
-                    f"type={spoof_result['detection_type']}"
+                    "Spoof attempt detected for employee %s: "
+                    "confidence=%.4f type=%s triggered=%s individual_scores=%s",
+                    employee_id,
+                    spoof_result["spoof_confidence"],
+                    spoof_result["detection_type"],
+                    spoof_result.get("triggered_methods", []),
+                    spoof_result.get("individual_scores", {}),
                 )
-                
+
                 if not spoof_detection_disabled:
                     result["spoof_detected"] = True
-                    result["errors"].append(f"Spoof detected: {spoof_result['spoof_confidence']:.2f}")
+                    result["errors"].append(
+                        f"Spoof detected: confidence={spoof_result['spoof_confidence']:.4f} "
+                        f"type={spoof_result['detection_type']}"
+                    )
                     result["security_events"].append("SPOOF_DETECTED")
                     result["security_events"].append(spoof_result["detection_type"])
-                    
-                    # Early return if spoof detected
+
+                    # Early return — backend-api will read spoof_confidence from result
                     result["timestamps"]["spoof_detection"] = time.time() - spoof_start
                     result["timestamps"]["total"] = time.time() - start_time
                     return result
-            
+
             result["timestamps"]["spoof_detection"] = time.time() - spoof_start
             
             # Step 5: Face Embedding Generation and Matching
@@ -698,17 +714,22 @@ def face_login():
             challenge_type=data.get('challenge_type') or data.get('challengeType'),
             stored_embedding=stored_embedding,
         )
-        
-        # Log security events
+        # STABILIZATION: guarantee full spoof telemetry schema on every response
+        # path (including early exits for dummy frames, no face detected, etc.)
+        result.setdefault('spoof_confidence', 0.0)
+        result.setdefault('detection_type', 'NONE')
+        result.setdefault('individual_scores', {})
+        result.setdefault('triggered_methods', [])
+
+        # Log security events with full spoof telemetry for audit trail
         if result.get('security_events'):
             logger.warning(
-                f"Security events for employee {data['employee_id']}: "
-                f"{result['security_events']}"
+                "Security events for employee %s: %s | spoof_confidence=%.4f type=%s",
+                data['employee_id'],
+                result['security_events'],
+                result['spoof_confidence'],
+                result['detection_type'],
             )
-        
-        # STABILIZATION: Add spoof_confidence to all response paths for consistent schema
-        if 'spoof_confidence' not in result:
-            result['spoof_confidence'] = 0.0
 
         return jsonify(result), 200
         
