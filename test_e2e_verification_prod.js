@@ -28,9 +28,9 @@ function runFaceQuery(sql) {
   }
 }
 
-// 1x1 pixel base64 Jpeg/Png frame
-const dummyBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-const dummyFrames = Array(10).fill(dummyBase64);
+// Load real synthetic frames for production testing
+const syntheticFrames = JSON.parse(fs.readFileSync('synthetic_frames.json', 'utf8'));
+const dummyFrames = syntheticFrames.slice(0, 10);
 
 async function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -133,6 +133,11 @@ async function runAllTests() {
     runQuery('TRUNCATE attendance_records CASCADE;');
     runQuery('TRUNCATE leave_requests CASCADE;');
     runQuery('TRUNCATE work_reports CASCADE;');
+    // Truncate recovery requests to avoid foreign key violations
+    try {
+      runQuery('TRUNCATE account_recovery_audit_log CASCADE;');
+      runQuery('TRUNCATE account_recovery_requests CASCADE;');
+    } catch (e) {}
     // Delete target employees to clean up
     runQuery("DELETE FROM employees WHERE employee_id NOT IN ('admin', 'supervisor', 'EMP001');");
     // Ensure admin user has default seeded password hash

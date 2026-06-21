@@ -133,6 +133,11 @@ async function runAllTests() {
     runQuery('TRUNCATE attendance_records CASCADE;');
     runQuery('TRUNCATE leave_requests CASCADE;');
     runQuery('TRUNCATE work_reports CASCADE;');
+    // Truncate recovery requests to avoid foreign key violations
+    try {
+      runQuery('TRUNCATE account_recovery_audit_log CASCADE;');
+      runQuery('TRUNCATE account_recovery_requests CASCADE;');
+    } catch (e) {}
     // Delete target employees to clean up
     runQuery("DELETE FROM employees WHERE employee_id NOT IN ('admin', 'supervisor', 'EMP001');");
     // Ensure admin user has default seeded password hash
