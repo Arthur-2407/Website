@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const validator = require('validator');
@@ -333,6 +334,64 @@ router.post('/login', async (req, res) => {
     });
   }
 });
+// Embedding Decryption Helpers (AES-256-GCM)
+function getEncryptionKey() {
+  const keyEnv = process.env.ENCRYPTION_MASTER_KEY;
+  if (!keyEnv) {
+    logger.warn('⚠️ No ENCRYPTION_MASTER_KEY in environment - embeddings will be stored/read unencrypted');
+    return null;
+  }
+  try {
+    return Buffer.from(keyEnv, 'base64');
+  } catch (err) {
+    logger.error('Failed to decode encryption key:', err.message);
+    return null;
+  }
+}
+
+function decryptEmbedding(encryptedData) {
+  const key = getEncryptionKey();
+  if (!key) {
+    // No encryption - try to parse as plain array
+    try {
+      const parsed = typeof encryptedData === 'string' ? JSON.parse(encryptedData) : encryptedData;
+      if (parsed && parsed.encrypted) {
+        logger.warn('Encrypted embedding found but no decryption key available');
+        return null;
+      }
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  
+  try {
+    const parsed = typeof encryptedData === 'string' ? JSON.parse(encryptedData) : encryptedData;
+    if (!parsed) return null;
+    
+    // If not marked as encrypted, return as-is
+    if (!parsed.encrypted) {
+      return Array.isArray(parsed) ? parsed : null;
+    }
+    
+    // Decrypt
+    const combined = Buffer.from(parsed.data, 'base64');
+    const nonce = combined.slice(0, 12);
+    const authTag = combined.slice(12, 28);
+    const ciphertext = combined.slice(28).toString('hex');
+    
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return JSON.parse(decrypted);
+  } catch (err) {
+    logger.error('Embedding decryption failed:', err.message);
+    return null;
+  }
+}
 
 router.post('/face-login', async (req, res) => {
   const { frames, employeeId, password, challengeType, location } = req.body;
@@ -467,46 +526,53 @@ router.post('/face-login', async (req, res) => {
     let authResult;
 
     // Fetch the active face embeddings from PostgreSQL for comparison
-    // Multi-embedding support: retrieve all active embeddings for the employee
+    // Multi-embedding support: retrieve all active/verified embeddings from BOTH tables for the employee
     let storedEmbeddingVector = null;
     try {
-      // First try user_images
-      let embeddingResult = await faceQuery(
+      const allEmbeddings = [];
+
+      // 1. Fetch verified embeddings from user_images
+      const imageResult = await faceQuery(
         `SELECT face_embedding
          FROM user_images
          WHERE user_id = $1 AND verification_status = 'VERIFIED'
-         ORDER BY uploaded_at DESC
-         LIMIT 1`,
+         ORDER BY uploaded_at DESC`,
         [employee.id]
       );
-      if (embeddingResult.rows.length > 0 && embeddingResult.rows[0].face_embedding) {
-        const raw = embeddingResult.rows[0].face_embedding;
-        storedEmbeddingVector = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      } else {
-        // Fallback to face_embeddings - retrieve ALL active embeddings
-        embeddingResult = await faceQuery(
-          `SELECT id, embedding_vector
-           FROM face_embeddings
-           WHERE employee_id = $1 AND is_active = TRUE
-           ORDER BY created_at DESC`,
-          [employee.id]
-        );
-        
-        if (embeddingResult.rows.length > 0) {
-          // Support multiple embeddings: create dict with id as key
-          storedEmbeddingVector = {};
-          for (const row of embeddingResult.rows) {
-            if (row.embedding_vector) {
-              const raw = row.embedding_vector;
-              const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-              storedEmbeddingVector[`embedding_${row.id}`] = parsed;
-            }
+      for (const row of imageResult.rows) {
+        if (row.face_embedding) {
+          const raw = row.face_embedding;
+          const decrypted = decryptEmbedding(raw);
+          if (Array.isArray(decrypted) && decrypted.length === 512) {
+            allEmbeddings.push(decrypted);
           }
-          // If only one embedding, convert to array for backward compatibility
-          const keys = Object.keys(storedEmbeddingVector);
-          if (keys.length === 1) {
-            storedEmbeddingVector = storedEmbeddingVector[keys[0]];
+        }
+      }
+
+      // 2. Fetch active embeddings from face_embeddings
+      const dbResult = await faceQuery(
+        `SELECT embedding_vector
+         FROM face_embeddings
+         WHERE employee_id = $1 AND is_active = TRUE
+         ORDER BY created_at DESC`,
+        [employee.id]
+      );
+      for (const row of dbResult.rows) {
+        if (row.embedding_vector) {
+          const raw = row.embedding_vector;
+          const decrypted = decryptEmbedding(raw);
+          if (Array.isArray(decrypted) && decrypted.length === 512) {
+            allEmbeddings.push(decrypted);
           }
+        }
+      }
+
+      if (allEmbeddings.length > 0) {
+        // If only one embedding is found, send as a single array for backward compatibility
+        if (allEmbeddings.length === 1) {
+          storedEmbeddingVector = allEmbeddings[0];
+        } else {
+          storedEmbeddingVector = allEmbeddings;
         }
       }
     } catch (embErr) {
@@ -534,7 +600,14 @@ router.post('/face-login', async (req, res) => {
     // Validate embedding integrity/dimensions
     let isCorrupted = false;
     if (Array.isArray(storedEmbeddingVector)) {
-      if (storedEmbeddingVector.length !== 512) {
+      if (storedEmbeddingVector.length > 0 && Array.isArray(storedEmbeddingVector[0])) {
+        for (const emb of storedEmbeddingVector) {
+          if (!Array.isArray(emb) || emb.length !== 512) {
+            isCorrupted = true;
+            break;
+          }
+        }
+      } else if (storedEmbeddingVector.length !== 512) {
         isCorrupted = true;
       }
     } else if (typeof storedEmbeddingVector === 'object') {

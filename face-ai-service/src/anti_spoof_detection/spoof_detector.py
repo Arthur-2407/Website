@@ -87,7 +87,7 @@ class SpoofDetector:
         # ── Temporal consistency (optical flow) ─────────────────────────
         # Mean optical flow magnitude below this → static (photo attack)
         self.temporal_static_threshold = float(
-            os.getenv("FACE_AI_TEMPORAL_STATIC_THRESHOLD", "0.25")
+            os.getenv("FACE_AI_TEMPORAL_STATIC_THRESHOLD", "0.10")
         )
         # Flow periodicity score above this → looping video replay
         self.temporal_periodic_threshold = float(

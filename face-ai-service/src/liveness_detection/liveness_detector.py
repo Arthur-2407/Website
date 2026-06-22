@@ -490,7 +490,7 @@ class LivenessDetector:
         }
 
         # Check if the primary video-replay/spoof defenses are passed
-        primary_defenses_passed = micro_texture["is_live"] and flow_naturalness["is_live"]
+        primary_defenses_passed = micro_texture["is_live"] or flow_naturalness["is_live"]
 
         # Blink: fallback to 0.75 if primary defenses are passed, otherwise 0.0
         blink_conf = min(blink_analysis["blink_count"] / 2.0, 1.0) \

@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including devDependencies for build)
-RUN npm config set registry https://registry.npmmirror.com && npm ci --include=dev
+RUN npm config set registry https://registry.npmjs.org && npm ci --include=dev
 
 # Copy source code
 COPY . .
@@ -29,7 +29,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install only production dependencies
-RUN npm config set registry https://registry.npmmirror.com && npm ci --omit=dev && npm cache clean --force
+RUN npm config set registry https://registry.npmjs.org && npm ci --omit=dev && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder /app/src ./src

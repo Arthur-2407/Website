@@ -295,10 +295,49 @@ class FaceMatcher:
     vectors.  Returns a match decision based on configurable threshold.
     """
 
-    def compare_embeddings(self, emb1: np.ndarray, emb2: np.ndarray) -> Dict:
+    def compare_embeddings(self, emb1: np.ndarray, emb2) -> Dict:
         """Return similarity score and match boolean."""
         try:
             v1 = np.asarray(emb1, dtype=np.float32).flatten()
+
+            # If emb2 is a list of embeddings
+            if isinstance(emb2, list):
+                if len(emb2) == 0:
+                    return {'similarity': 0.0, 'match': False, 'error': 'Empty embedding list'}
+                
+                best_similarity = -1.0
+                best_match = False
+                
+                for single_emb in emb2:
+                    res = self.compare_embeddings(v1, single_emb)
+                    if res.get('similarity', 0.0) > best_similarity:
+                        best_similarity = res['similarity']
+                        best_match = res['match']
+                
+                return {
+                    'similarity': best_similarity,
+                    'match': best_match
+                }
+            
+            # If emb2 is a dictionary of embeddings
+            elif isinstance(emb2, dict):
+                if len(emb2) == 0:
+                    return {'similarity': 0.0, 'match': False, 'error': 'Empty embedding dictionary'}
+                
+                best_similarity = -1.0
+                best_match = False
+                
+                for key, single_emb in emb2.items():
+                    res = self.compare_embeddings(v1, single_emb)
+                    if res.get('similarity', 0.0) > best_similarity:
+                        best_similarity = res['similarity']
+                        best_match = res['match']
+                
+                return {
+                    'similarity': best_similarity,
+                    'match': best_match
+                }
+
             v2 = np.asarray(emb2, dtype=np.float32).flatten()
 
             if v1.shape != v2.shape or v1.shape[0] == 0:
@@ -604,13 +643,24 @@ class FaceAuthenticationPipeline:
             
             # Step 5.5: Unified Risk Scoring
             scoring_start = time.time()
+            primary_defenses_passed = liveness_result.get("micro_texture_live", False) or liveness_result.get("flow_naturalness_live", False)
+            
+            blink_score = min(liveness_result.get("blink_count", 0) / 2.0, 1.0) \
+                if liveness_result.get("blink_detected", False) else (0.75 if primary_defenses_passed else 0.0)
+                
+            head_pose_score = min(liveness_result.get("head_movement_magnitude", 0.0) / 0.05, 1.0) \
+                if liveness_result.get("head_movement_detected", False) else (0.75 if primary_defenses_passed else 0.0)
+                
+            depth_score = min(liveness_result.get("depth_variation_score", 0.0) / 0.15, 1.0) \
+                if liveness_result.get("depth_variation_detected", False) else (0.75 if primary_defenses_passed else 0.0)
+
             auth_data = {
                 "face_match_score": match_result["similarity"] if match_result else 0.0,
                 "liveness_score": liveness_result.get("confidence", 0.0),
-                "depth_score": liveness_result.get("depth_variation_score", 0.5),
+                "depth_score": depth_score,
                 "texture_score": 1.0 - spoof_result.get("individual_scores", {}).get("texture_analysis", 0.0),
-                "head_pose_score": min(liveness_result.get("head_movement_magnitude", 0.0) / 0.05, 1.0) if liveness_result.get("head_movement_detected", False) else 0.0,
-                "blink_score": min(liveness_result.get("blink_count", 0) / 2.0, 1.0) if liveness_result.get("blink_detected", False) else 0.0,
+                "head_pose_score": head_pose_score,
+                "blink_score": blink_score,
                 "frame_consistency_score": 1.0 - spoof_result.get("individual_scores", {}).get("temporal_consistency", 0.0),
                 "mesh_score": deepfake_result.get("landmark_stability", 0.5),
                 "deepfake_score": 1.0 - deepfake_result.get("deepfake_confidence", 0.0),
@@ -815,16 +865,43 @@ def face_login():
             return jsonify({'error': 'No valid frames decoded', 'code': 'INVALID_FRAMES'}), 400
 
         # Deserialize stored_embedding from payload (injected by Express API from PostgreSQL)
-        stored_embedding_raw = data.get('stored_embedding')  # list[float] or None
-        stored_embedding: Optional[np.ndarray] = None
+        stored_embedding_raw = data.get('stored_embedding')  # list[float], list[list[float]], dict, or None
+        stored_embedding = None
         if stored_embedding_raw is not None:
             try:
-                arr = np.asarray(stored_embedding_raw, dtype=np.float32).flatten()
-                if arr.shape[0] > 0:
-                    stored_embedding = arr
-                    logger.info(f'Received stored_embedding for {data["employee_id"]} dim={arr.shape[0]}')
+                if isinstance(stored_embedding_raw, list):
+                    if len(stored_embedding_raw) > 0 and isinstance(stored_embedding_raw[0], list):
+                        # List of lists (multiple embeddings)
+                        stored_embeddings = []
+                        for emb in stored_embedding_raw:
+                            arr = np.asarray(emb, dtype=np.float32).flatten()
+                            if arr.shape[0] == 512:
+                                stored_embeddings.append(arr)
+                        if stored_embeddings:
+                            stored_embedding = stored_embeddings
+                            logger.info(f'Received list of {len(stored_embeddings)} stored_embeddings for {data["employee_id"]}')
+                    else:
+                        # Single embedding list
+                        arr = np.asarray(stored_embedding_raw, dtype=np.float32).flatten()
+                        if arr.shape[0] == 512:
+                            stored_embedding = arr
+                            logger.info(f'Received single stored_embedding for {data["employee_id"]} dim=512')
+                elif isinstance(stored_embedding_raw, dict):
+                    # Dictionary of embeddings
+                    stored_embeddings = []
+                    for key, val in stored_embedding_raw.items():
+                        arr = np.asarray(val, dtype=np.float32).flatten()
+                        if arr.shape[0] == 512:
+                            stored_embeddings.append(arr)
+                    if stored_embeddings:
+                        stored_embedding = stored_embeddings
+                        logger.info(f'Received dict of {len(stored_embeddings)} stored_embeddings for {data["employee_id"]}')
                 else:
-                    logger.warning('Received empty stored_embedding array')
+                    # Generic single embedding fallback
+                    arr = np.asarray(stored_embedding_raw, dtype=np.float32).flatten()
+                    if arr.shape[0] == 512:
+                        stored_embedding = arr
+                        logger.info(f'Received generic stored_embedding for {data["employee_id"]} dim=512')
             except Exception as emb_err:
                 logger.warning(f'Could not deserialise stored_embedding: {emb_err}')
 
