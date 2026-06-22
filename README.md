@@ -1,3 +1,7 @@
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+![Docker](https://img.shields.io/badge/docker-supported-blue)
+![Node.js](https://img.shields.io/badge/node.js-supported-green)
+
 # Enterprise Employee Attendance & Face Recognition System
 
 An enterprise-grade Employee Attendance Management System featuring biometric face recognition, role-based access control, leave management, real-time notifications, workforce analytics, geofencing, and secure authentication workflows.
